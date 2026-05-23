@@ -10,12 +10,8 @@ import re
 import sys
 from pathlib import Path
 
-import httpx as _httpx
-
-from . import atoms, chapters as chapters_mod, mux, subs_pgs
-from .metadata import apple_tv, chapterdb, storefronts, tagger
-
-httpx_exc = _httpx
+from . import atoms, mux, subs_pgs
+from .metadata import apple_tv, storefronts, tagger
 
 
 _TV_RE = re.compile(r"(?P<show>.+?)[. _-]*[sS](?P<s>\d{1,2})[eE](?P<e>\d{1,3})")
@@ -69,46 +65,6 @@ _TRANSFER = {"bt709": 1, "unknown": 2, "bt470bg": 5, "smpte170m": 6, "bt2020-10"
              "bt2020-12": 15, "smpte2084": 16, "arib-std-b67": 18, "iec61966-2-1": 13}
 _MATRIX = {"bt709": 1, "unknown": 2, "fcc": 4, "bt470bg": 5, "smpte170m": 6,
            "bt2020nc": 9, "bt2020c": 10}
-
-
-def _apply_chapterdb(target: Path, source: Path, *, interactive: bool) -> dict[str, object]:
-    """Search chapterdb by guessed title + source duration, then embed."""
-    _, title, _, _ = guess_query(source)
-    info = mux.probe(source)
-    fmt = info.raw.get("format") or {}
-    try:
-        duration_ms = int(float(fmt.get("duration", "0")) * 1000)
-    except (TypeError, ValueError):
-        duration_ms = 0
-
-    try:
-        hits = chapterdb.search(title, duration_ms)
-    except httpx_exc.HTTPError as e:  # type: ignore[name-defined]
-        return {"applied": False, "reason": f"ChapterDB request failed: {e}"}
-    if not hits:
-        return {"applied": False, "reason":
-                f"no ChapterDB matches for {title!r} (the public key may be "
-                "expired; set DOLBY_CHAPTERDB_API_KEY to override)"}
-
-    if interactive and len(hits) > 1:
-        labels = [
-            f"{h.title} — {len(h.chapters)} chapters, "
-            f"{h.duration_ms // 60000}m{(h.duration_ms // 1000) % 60:02d}s, "
-            f"confirmations={h.confirmations}"
-            for h in hits[:8]
-        ]
-        idx = _pick_interactive(f"ChapterDB matches for {title!r}:", labels)
-        if idx is None:
-            return {"applied": False, "reason": "user skipped"}
-        chosen = hits[idx]
-    else:
-        # Auto: most-confirmed set wins (proxy for "most-vetted by users").
-        chosen = max(hits, key=lambda h: h.confirmations)
-
-    result = chapters_mod.embed(target, chosen.chapters, duration_ms)
-    result["matched_title"] = chosen.title
-    result["set_id"] = chosen.set_id
-    return result
 
 
 def _resolve_colr_args(args, src: Path) -> tuple[int, int, int, bool] | None:
@@ -277,13 +233,6 @@ def main_convert(argv: list[str]) -> None:
              "patch on the measured build — only use if you have an independent "
              "Atmos/JOC verification of the source.",
     )
-    parser.add_argument(
-        "--chapters-from-chapterdb",
-        action="store_true",
-        help="After mux, search chapterdb.plex.tv for named chapters matching "
-             "the guessed title and source duration, then embed them via an "
-             "ffmpeg remux (stream-copy, no quality loss).",
-    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -313,9 +262,6 @@ def main_convert(argv: list[str]) -> None:
             "patched": atoms.patch_colr_nclx(dst, p, t, m, fr),
             "primaries": p, "transfer": t, "matrix": m, "full_range": fr,
         }
-    if args.chapters_from_chapterdb:
-        summary["chapterdb"] = _apply_chapterdb(dst, src, interactive=not args.non_interactive and sys.stdin.isatty())
-
     if args.experimental_force_dec3_joc:
         print(
             "WARNING: --experimental-force-dec3-joc OR's the dec3 JOC bit without "
