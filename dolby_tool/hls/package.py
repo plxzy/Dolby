@@ -1,6 +1,7 @@
 """Stream-copy a local media file into fMP4 HLS that QuickTime and Safari can play from `hls-serve`."""
 
 import fnmatch
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Self
@@ -12,6 +13,33 @@ from .playlist import MASTER_PLAYLIST, playlist_references, set_attribute
 _DV_HEVC_TAGS = frozenset({"dvh1", "dvhe"})
 # HLS VIDEO-RANGE by the stream's transfer function; anything else is SDR.
 _VIDEO_RANGES = {"smpte2084": "PQ", "arib-std-b67": "HLG"}
+
+# HLS LANGUAGE is a BCP 47 tag, which spells these ISO 639-2 codes (both the bibliographic and the
+# terminology forms) with two letters. Other well-formed tags pass through unchanged.
+_LANGUAGE_CODES = {
+    "eng": "en",
+    "fra": "fr",
+    "fre": "fr",
+    "deu": "de",
+    "ger": "de",
+    "spa": "es",
+    "ita": "it",
+    "jpn": "ja",
+    "nld": "nl",
+    "dut": "nl",
+    "por": "pt",
+    "rus": "ru",
+    "zho": "zh",
+    "chi": "zh",
+    "kor": "ko",
+    "swe": "sv",
+    "dan": "da",
+    "nor": "no",
+    "fin": "fi",
+    "pol": "pl",
+}
+_LANGUAGE_TAG = re.compile(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*")
+_DEFAULT_LANGUAGE = "en"
 
 # Output names handed to ffmpeg: `%v` is the variant name, `%04d` the segment number. With several
 # variants ffmpeg suffixes the init segment with the variant index (init_0.mp4, init_1.mp4, ...).
@@ -160,7 +188,9 @@ def _ffmpeg_command(
     split_audio_group: bool,
 ) -> list[str]:
     var_stream_map = (
-        "v:0,agroup:audio,name:video a:0,agroup:audio,language:eng,name:English,default:yes"
+        # `name:` only decides the output file names; the rendition's LANGUAGE and NAME
+        # attributes are set by _patch_master_playlist.
+        "v:0,agroup:audio,name:video a:0,agroup:audio,name:English,default:yes"
         if split_audio_group
         else "v:0,a:0,name:main"
     )
@@ -309,9 +339,10 @@ def _video_range(stream: dict[str, Any], dolby_vision: DolbyVision | None) -> st
 
 
 def _language(stream: dict[str, Any]) -> str:
-    tags = stream.get("tags")
-    language = str(tags.get("language") or "") if isinstance(tags, dict) else ""
-    return {"eng": "en"}.get(language.lower(), language or "en")
+    language = str((stream.get("tags") or {}).get("language") or "").strip()
+    if not _LANGUAGE_TAG.fullmatch(language):
+        return _DEFAULT_LANGUAGE
+    return _LANGUAGE_CODES.get(language.lower(), language)
 
 
 def _parse_fraction(value: str) -> float | None:

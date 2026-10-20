@@ -116,7 +116,7 @@ def test_package_hls_from_file_invokes_ffmpeg_for_split_audio_group(tmp_path, so
     assert "0:a:1" in cmd
     assert "-hls_segment_type" in cmd
     assert "fmp4" in cmd
-    assert "v:0,agroup:audio,name:video a:0,agroup:audio,language:eng,name:English,default:yes" in cmd
+    assert "v:0,agroup:audio,name:video a:0,agroup:audio,name:English,default:yes" in cmd
     assert summary["split_audio_group"] is True
     assert summary["ffmpeg_stderr_tail"] == ["ffmpeg stderr"]
     assert summary["master_playlist_tags"] == {
@@ -319,6 +319,32 @@ def test_cover_art_is_not_taken_for_the_video_stream(tmp_path, source, fake_tool
     assert summary["master_playlist_tags"]["frame_rate"] == "23.976"
     cmd = fake_tools.ffmpeg_cmd
     assert cmd[cmd.index("-map") + 1] == "0:V:0"
+
+
+@pytest.mark.parametrize(
+    ("tags", "expected"),
+    [
+        pytest.param({"language": "eng"}, "en", id="eng"),
+        pytest.param({"language": "fra"}, "fr", id="fra"),
+        pytest.param({"language": "fre"}, "fr", id="fre"),
+        pytest.param({"language": "ger"}, "de", id="ger"),
+        pytest.param({"language": "JPN"}, "ja", id="upper-case"),
+        pytest.param({"language": "pt-BR"}, "pt-BR", id="bcp47-passes-through"),
+        pytest.param({"language": "tlh"}, "tlh", id="unlisted-passes-through"),
+        pytest.param({}, "en", id="missing"),
+        pytest.param({"language": 'en",X="y'}, "en", id="unquotable"),
+    ],
+)
+def test_language_attribute_follows_the_audio_track(tmp_path, source, fake_tools, tags, expected):
+    fake_tools.streams = [DV_VIDEO, {**ATMOS_EAC3, "tags": tags}]
+    output = tmp_path / "out"
+
+    summary = package_hls_from_file(source, output)
+
+    assert summary["master_playlist_tags"]["language"] == expected
+    assert f'LANGUAGE="{expected}",' in (output / "master.m3u8").read_text(encoding="utf-8")
+    # The rendition's file names stay ASCII and stable whatever the language.
+    assert "v:0,agroup:audio,name:video a:0,agroup:audio,name:English,default:yes" in fake_tools.ffmpeg_cmd
 
 
 @pytest.mark.requires_ffmpeg
