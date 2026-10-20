@@ -11,6 +11,7 @@ Each event is a dict with `kind`, `raw`, `ts` plus the fields parsed by `parser`
 """
 
 import asyncio
+import logging
 import signal
 import subprocess
 import threading
@@ -23,6 +24,8 @@ from ..common import ToolError
 from .parser import Event, parse_line
 from .predicates import PREDICATE
 from .summary import CaptureState, build_summary
+
+logger = logging.getLogger(__name__)
 
 # How long `log stream` gets to exit after SIGINT before it is killed, and how long
 # stop() then waits for the reader thread to drain the pipe.
@@ -80,11 +83,14 @@ class LogCapture:
         if self._proc is not None:
             return
         try:
+            # stderr is left attached to ours: `log` reports problems there, not log lines.
             proc = subprocess.Popen(
                 self.command,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,
             )
         except OSError as e:
@@ -137,11 +143,15 @@ class LogCapture:
         """Parse the command's output until it exits, then close the pipe."""
         with stdout:
             for line in stdout:
-                event = parse_line(line)
-                if not event:
+                try:
+                    if (event := parse_line(line)) is None:
+                        continue
+                    event["ts"] = time.time()
+                    self.add_event(event)
+                except Exception:
+                    # One unexpected line must not end a capture that may run for hours.
+                    logger.exception("skipped a log line that could not be processed: %r", line)
                     continue
-                event["ts"] = time.time()
-                self.add_event(event)
                 self._broadcast(event)
 
     def add_event(self, event: Event) -> None:

@@ -231,3 +231,33 @@ def test_a_stopped_capture_can_be_started_again_from_scratch():
 
     assert [event["kind"] for event in summary["events"]] == ["hls_variant", "codec_type"]
     assert "audio" not in summary["playback"]
+
+
+def test_reader_survives_undecodable_bytes():
+    script = "import sys; sys.stdout.buffer.write(b'\\xff\\xfe broken \\xc3\\n' + sys.argv[1].encode() + b'\\n')"
+    with LogCapture(command=[sys.executable, "-c", script, LINES[1]]) as capture:
+        _wait_until(lambda: _event_count(capture) == 1)
+
+    assert capture.stop()["playback"]["decoded_fourcc"] == "dvh1"
+
+
+def test_one_bad_line_does_not_end_the_capture(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    def fragile_parse_line(line: str):
+        if "BOOM" in line:
+            raise ValueError("unexpected log format")
+        return parse_line(line)
+
+    monkeypatch.setattr(session, "parse_line", fragile_parse_line)
+    with LogCapture(command=_printing("BOOM", *LINES)) as capture:
+        _wait_until(lambda: _event_count(capture) == len(LINES))
+
+    assert "BOOM" in caplog.text
+
+
+def test_stderr_is_not_parsed_as_log_output():
+    script = "import sys; sys.stderr.write(sys.argv[1] + '\\n'); print(sys.argv[2])"
+    capture = LogCapture(command=[sys.executable, "-c", script, LINES[1], LINES[2]])
+    capture.start()
+    _wait_until(lambda: capture._proc.poll() is not None)
+
+    assert [event["kind"] for event in capture.stop()["events"]] == ["audio_format"]
