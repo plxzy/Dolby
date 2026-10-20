@@ -1,6 +1,61 @@
 import pytest
 
-from dolby_tool.hls.playlist import first_segment_uri, parse_attributes, playlist_references, read_playlist
+from dolby_tool.hls.playlist import (
+    first_segment_uri,
+    parse_attributes,
+    playlist_references,
+    read_playlist,
+    set_attribute,
+)
+
+
+@pytest.mark.parametrize(
+    ("line", "key", "value", "quoted", "expected"),
+    [
+        pytest.param(
+            '#EXT-X-MEDIA:TYPE=AUDIO,ASSOC-LANGUAGE="fr",LANGUAGE="eng",NAME="English"',
+            "LANGUAGE",
+            "en",
+            True,
+            '#EXT-X-MEDIA:TYPE=AUDIO,ASSOC-LANGUAGE="fr",LANGUAGE="en",NAME="English"',
+            id="language-not-assoc-language",
+        ),
+        pytest.param(
+            '#EXT-X-STREAM-INF:BANDWIDTH=1,SUPPLEMENTAL-CODECS="dvh1.08.06/db1p",CODECS="hvc1"',
+            "CODECS",
+            "dvh1.08.06,ec-3",
+            True,
+            '#EXT-X-STREAM-INF:BANDWIDTH=1,SUPPLEMENTAL-CODECS="dvh1.08.06/db1p",CODECS="dvh1.08.06,ec-3"',
+            id="codecs-not-supplemental-codecs",
+        ),
+        pytest.param(
+            '#EXT-X-MEDIA:TYPE=AUDIO,CHARACTERISTICS="x.y,LANGUAGE=zz"',
+            "LANGUAGE",
+            "en",
+            True,
+            '#EXT-X-MEDIA:TYPE=AUDIO,CHARACTERISTICS="x.y,LANGUAGE=zz",LANGUAGE="en"',
+            id="ignores-text-inside-quoted-values",
+        ),
+        pytest.param(
+            "#EXT-X-STREAM-INF:VIDEO-RANGE=SDR,BANDWIDTH=1",
+            "VIDEO-RANGE",
+            "PQ",
+            False,
+            "#EXT-X-STREAM-INF:VIDEO-RANGE=PQ,BANDWIDTH=1",
+            id="first-attribute",
+        ),
+        pytest.param(
+            "#EXT-X-STREAM-INF:BANDWIDTH=1",
+            "FRAME-RATE",
+            "23.976",
+            False,
+            "#EXT-X-STREAM-INF:BANDWIDTH=1,FRAME-RATE=23.976",
+            id="appends-when-absent",
+        ),
+    ],
+)
+def test_set_attribute_replaces_one_whole_attribute(line, key, value, quoted, expected):
+    assert set_attribute(line, key, value, quoted=quoted) == expected
 
 
 def test_parse_attributes_unquotes_values_and_keeps_commas_inside_quotes():

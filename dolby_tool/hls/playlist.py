@@ -25,12 +25,16 @@ def parse_attributes(text: str) -> dict[str, str]:
 
 
 def set_attribute(line: str, key: str, value: str, *, quoted: bool) -> str:
-    """Set `key` on a tag line such as `#EXT-X-MEDIA:...`, appending it when absent."""
+    """Set `key` on a tag line such as `#EXT-X-MEDIA:...`, appending it when absent.
+
+    Only a whole attribute name matches, so setting `LANGUAGE` leaves `ASSOC-LANGUAGE` alone.
+    """
+    tag, _, attributes = line.partition(":")
     rendered = f'{key}="{value}"' if quoted else f"{key}={value}"
-    pattern = re.compile(rf"{re.escape(key)}=(?:\"[^\"]*\"|[^,]*)")
-    if pattern.search(line):
-        return pattern.sub(rendered, line)
-    return f"{line},{rendered}"
+    for match in _ATTRIBUTE.finditer(attributes):
+        if match["key"] == key:
+            return f"{tag}:{attributes[: match.start('key')]}{rendered}{attributes[match.end() :]}"
+    return f"{tag}:{attributes},{rendered}" if attributes else f"{tag}:{rendered}"
 
 
 def read_playlist(path: Path) -> str:
