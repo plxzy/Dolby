@@ -1,42 +1,61 @@
 #!/usr/bin/env bash
-# Launcher for dolby-tool — uses uv (no manual venv management needed).
-# uv automatically creates/updates the venv from pyproject.toml on each run.
+# Launcher for dolby-tool — uses uv (no manual venv management needed); uv
+# creates/updates the venv from pyproject.toml + uv.lock on each run.
 #
 # Usage:
-#   ./dolby-tool           start server + open browser
-#   ./dolby-tool stop      kill any running instance on port 7878
+#   ./dolby-tool [--port N] [--host H]   start the web UI and open it in Safari
+#   ./dolby-tool stop [--port N]         stop a running web UI
+#   ./dolby-tool <command> [args…]       run a CLI command (see ./dolby-tool --help)
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+cd "$(dirname "${BASH_SOURCE[0]}")"
 
-PORT=7878
+port=7878
+mode=server
 
-# -- stop subcommand --------------------------------------------------------
-if [ "${1:-}" = "stop" ]; then
-  pid=$(lsof -ti TCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)
+case "${1:-}" in
+  stop) mode=stop; shift ;;
+  serve | "" | --host* | --port* | --reload) ;;
+  *) mode=passthrough ;;  # a subcommand, --help or --version
+esac
+
+# Pick up --port N / --port=N for server and stop modes (bash 3.2-safe: no arrays).
+prev=""
+for arg in "$@"; do
+  case "$arg" in --port=*) port="${arg#--port=}" ;; esac
+  if [ "$prev" = "--port" ]; then port="$arg"; fi
+  prev="$arg"
+done
+
+if [ "$mode" = stop ]; then
+  pid=$(lsof -ti TCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
   if [ -n "$pid" ]; then
-    kill "$pid" && echo "[dolby-tool] Stopped (pid $pid)."
+    kill $pid && echo "[dolby-tool] Stopped (pid $pid)."
   else
-    echo "[dolby-tool] Nothing running on port $PORT."
+    echo "[dolby-tool] Nothing running on port $port."
   fi
   exit 0
 fi
 
-# -- sanity checks ----------------------------------------------------------
 command -v uv >/dev/null 2>&1 || {
   echo "[dolby-tool] ERROR: uv not found. Install with: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
   exit 1
 }
+command -v ffprobe >/dev/null 2>&1 || echo "[dolby-tool] WARNING: ffprobe not found. Install with: brew install ffmpeg" >&2
 
-command -v ffprobe >/dev/null 2>&1 || {
-  echo "[dolby-tool] WARNING: ffprobe not found. Install with: brew install ffmpeg" >&2
-}
-
-# -- open browser after a short delay ---------------------------------------
-( sleep 1
-  open -a "Safari" "http://localhost:$PORT"
-) &
+if [ "$mode" = server ]; then
+  # Open the UI once the server answers (give up after ~15 s, e.g. on a port clash).
+  (
+    url="http://localhost:$port"
+    for _ in $(seq 1 75); do
+      if curl -fsS -o /dev/null "http://127.0.0.1:$port/api/health" 2>/dev/null; then
+        if command -v open >/dev/null 2>&1; then open -a Safari "$url"; else echo "[dolby-tool] Ready: $url"; fi
+        exit 0
+      fi
+      sleep 0.2
+    done
+  ) &
+fi
 
 exec uv run dolby-tool "$@"

@@ -1,13 +1,18 @@
-"""`dolby-tool` command line: starts the web UI (default) or runs one of the analysis subcommands."""
+"""`dolby-tool` command line: starts the web UI (default) or runs one of the subcommands."""
 
 import argparse
 import ipaddress
 import json
+import os
 import sys
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
-import uvicorn
-
+from . import __version__
+from .analysis import InspectError, compare_files, compare_markdown, inspect_file, spec_markdown
 from .capture import (
     LOCAL_PLAYER_PREDICATE,
     PREDICATE,
@@ -15,6 +20,7 @@ from .capture import (
     summarize_log_file,
     tvlog_summary_markdown,
 )
+from .common import ToolError
 from .hls import (
     analyze_movpkg,
     create_hls_server,
@@ -30,69 +36,122 @@ from .hls import (
     scan_movpkgs,
 )
 
+DEFAULT_PORT = 7878
+PREDICATES = {"tv": PREDICATE, "local-player": LOCAL_PLAYER_PREDICATE}
 
-def main() -> None:
-    if len(sys.argv) > 1 and sys.argv[1] == "movpkg":
-        _main_movpkg(sys.argv[2:])
-        return
-    if len(sys.argv) > 1 and sys.argv[1] == "movpkg-scan":
-        _main_movpkg_scan(sys.argv[2:])
-        return
-    if len(sys.argv) > 1 and sys.argv[1] == "tvlog-parse":
-        _main_tvlog_parse(sys.argv[2:])
-        return
-    if len(sys.argv) > 1 and sys.argv[1] == "tvlog-capture":
-        _main_tvlog_capture(sys.argv[2:])
-        return
-    if len(sys.argv) > 1 and sys.argv[1] == "hls-serve":
-        _main_hls_serve(sys.argv[2:])
-        return
-    if len(sys.argv) > 1 and sys.argv[1] == "hls-prepare":
-        _main_hls_prepare(sys.argv[2:])
-        return
-    if len(sys.argv) > 1 and sys.argv[1] == "hls-package":
-        _main_hls_package(sys.argv[2:])
-        return
-    if len(sys.argv) > 1 and sys.argv[1] == "hls-package-capture":
-        _main_hls_package_capture(sys.argv[2:])
-        return
-    if len(sys.argv) > 1 and sys.argv[1] == "convert":
-        from .convert.commands import main_convert
 
-        main_convert(sys.argv[2:])
-        return
-    if len(sys.argv) > 1 and sys.argv[1] == "tag":
-        from .convert.commands import main_tag
+@dataclass(frozen=True, slots=True)
+class Command:
+    help: str
+    run: Callable[[list[str]], None]
 
-        main_tag(sys.argv[2:])
-        return
 
-    parser = argparse.ArgumentParser(prog="dolby-tool")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=7878)
-    parser.add_argument("--reload", action="store_true", help="Auto-reload on code changes (dev).")
-    args = parser.parse_args()
-
+def main(argv: list[str] | None = None) -> int:
+    """Dispatch `dolby-tool [command] …`; with no command (or only server flags) start the web UI."""
+    argv = sys.argv[1:] if argv is None else argv
     try:
-        is_loopback = ipaddress.ip_address(args.host).is_loopback
-    except ValueError:
-        is_loopback = args.host in {"localhost"}
+        if argv and argv[0] in COMMANDS:
+            COMMANDS[argv[0]].run(argv[1:])
+        else:
+            _serve(argv)
+    except KeyboardInterrupt:
+        return 130
+    except (InspectError, ToolError, ValueError, OSError) as e:
+        print(f"dolby-tool: error: {e}", file=sys.stderr)
+        return 1
+    return 0
 
-    if not is_loopback:
-        print(
-            f"⚠️  Warning: binding to non-loopback host {args.host}. This tool can inspect arbitrary local file paths."
-        )
 
-    uvicorn.run(
-        "dolby_tool.web.app:app",
-        host=args.host,
-        port=args.port,
-        reload=args.reload,
-        log_level="info",
+# ---------------------------------------------------------------------------
+# web UI
+
+
+def _serve(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="dolby-tool",
+        description="Inspect Dolby Vision / HDR / Atmos media and capture what TV.app actually plays.\n"
+        "Without a command, starts the web UI on http://127.0.0.1:7878.",
+        epilog=_commands_epilog(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("--host", default="127.0.0.1", help="Bind address (default: loopback only).")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Port (default: {DEFAULT_PORT}).")
+    parser.add_argument("--reload", action="store_true", help="Auto-reload on code changes (development).")
+    parser.add_argument("--version", action="version", version=f"dolby-tool {__version__}")
+    args = parser.parse_args(argv)
+
+    if not _is_loopback(args.host):
+        print(
+            f"⚠️  Warning: binding to non-loopback host {args.host}. This tool can inspect arbitrary local file paths.",
+            file=sys.stderr,
+        )
+    os.environ["DOLBY_TOOL_HOST"] = args.host  # read by dolby_tool.web.app to build its Host/Origin allow-lists
+
+    import uvicorn
+
+    uvicorn.run("dolby_tool.web.app:app", host=args.host, port=args.port, reload=args.reload, log_level="info")
 
 
-def _main_movpkg(argv: list[str]) -> None:
+def _commands_epilog() -> str:
+    width = max(map(len, COMMANDS))
+    lines = [f"  {name.ljust(width)}  {command.help}" for name, command in COMMANDS.items()]
+    return "commands:\n" + "\n".join(lines) + "\n\nRun `dolby-tool <command> --help` for a command's options."
+
+
+def _is_loopback(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return host == "localhost"
+
+
+# ---------------------------------------------------------------------------
+# analysis
+
+
+def _inspect(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(prog="dolby-tool inspect", description="Inspect one media file.")
+    parser.add_argument("path", help="Media file (.mp4, .m4v, .mkv, .mov, .ts).")
+    parser.add_argument("--json", action="store_true", help="Print JSON instead of Markdown.")
+    args = parser.parse_args(argv)
+
+    spec = inspect_file(str(Path(args.path).expanduser()))
+    _emit(spec.model_dump(mode="json"), spec_markdown(spec), as_json=args.json)
+
+
+def _compare(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(prog="dolby-tool compare", description="Rank several media files.")
+    parser.add_argument("paths", nargs="+", help="Media files to compare.")
+    parser.add_argument(
+        "--weight",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Override a score weight, e.g. --weight atmos=30 (repeatable).",
+    )
+    parser.add_argument("--json", action="store_true", help="Print JSON instead of Markdown.")
+    args = parser.parse_args(argv)
+
+    weights = dict(_parse_weight(item, parser) for item in args.weight) or None
+    result = compare_files([str(Path(p).expanduser()) for p in args.paths], weights)
+    _emit(result.model_dump(mode="json"), compare_markdown(result), as_json=args.json)
+
+
+def _parse_weight(item: str, parser: argparse.ArgumentParser) -> tuple[str, float]:
+    key, sep, value = item.partition("=")
+    try:
+        if not sep:
+            raise ValueError
+        return key.strip(), float(value)
+    except ValueError:
+        parser.error(f"invalid --weight {item!r}; expected KEY=NUMBER")
+
+
+# ---------------------------------------------------------------------------
+# .movpkg inventory
+
+
+def _movpkg(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(prog="dolby-tool movpkg")
     parser.add_argument("path", help="Path to a downloaded TV.app .movpkg package.")
     parser.add_argument(
@@ -103,13 +162,10 @@ def _main_movpkg(argv: list[str]) -> None:
     args = parser.parse_args(argv)
 
     summary = analyze_movpkg(args.path, selected_group=args.selected_group)
-    if args.json:
-        print(json.dumps(summary, indent=2, sort_keys=True))
-    else:
-        print(movpkg_summary_markdown(summary))
+    _emit(summary, movpkg_summary_markdown(summary), as_json=args.json)
 
 
-def _main_movpkg_scan(argv: list[str]) -> None:
+def _movpkg_scan(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(prog="dolby-tool movpkg-scan")
     parser.add_argument("root", help="TV.app media directory, season folder, or a single `.movpkg` package.")
     parser.add_argument(
@@ -120,33 +176,34 @@ def _main_movpkg_scan(argv: list[str]) -> None:
     args = parser.parse_args(argv)
 
     scan = scan_movpkgs(args.root, selected_group=args.selected_group)
-    if args.json:
-        print(json.dumps(scan, indent=2, sort_keys=True))
-    else:
-        print(movpkg_scan_markdown(scan))
+    _emit(scan, movpkg_scan_markdown(scan), as_json=args.json)
 
 
-def _main_tvlog_parse(argv: list[str]) -> None:
+# ---------------------------------------------------------------------------
+# playback log capture
+
+
+def _tvlog_parse(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(prog="dolby-tool tvlog-parse")
     parser.add_argument("path", help="Path to a saved `log stream --style compact` text file.")
     parser.add_argument(
         "--profile",
-        choices=["tv", "local-player"],
+        choices=list(PREDICATES),
         default="local-player",
         help="Predicate profile recorded with the capture. Used only for summary metadata.",
     )
     parser.add_argument("--json", action="store_true", help="Print JSON instead of Markdown.")
     args = parser.parse_args(argv)
 
-    summary = summarize_log_file(args.path, predicate=_predicate_for_profile(args.profile))
-    _print_tvlog_summary(summary, as_json=args.json)
+    summary = summarize_log_file(args.path, predicate=PREDICATES[args.profile])
+    _emit(summary, tvlog_summary_markdown(summary), as_json=args.json)
 
 
-def _main_tvlog_capture(argv: list[str]) -> None:
+def _tvlog_capture(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(prog="dolby-tool tvlog-capture")
     parser.add_argument(
         "--profile",
-        choices=["tv", "local-player"],
+        choices=list(PREDICATES),
         default="tv",
         help="Use `tv` for normal TV.app capture or `local-player` for QuickTime/Safari controls.",
     )
@@ -155,25 +212,18 @@ def _main_tvlog_capture(argv: list[str]) -> None:
     parser.add_argument("--json", action="store_true", help="Print JSON instead of Markdown.")
     args = parser.parse_args(argv)
 
-    capture = LogCapture(predicate=_predicate_for_profile(args.profile))
-    print(
-        f"Capturing {args.profile} playback logs for {args.seconds:g}s...",
-        file=sys.stderr,
-    )
-    capture.start()
-    try:
-        time.sleep(max(args.seconds, 0))
-    except KeyboardInterrupt:
-        pass
-    summary = capture.stop()
-    if args.output:
-        with open(args.output, "w", encoding="utf-8") as f:
-            json.dump(summary, f, indent=2, sort_keys=True)
-            f.write("\n")
-    _print_tvlog_summary(summary, as_json=args.json)
+    print(f"Capturing {args.profile} playback logs for {args.seconds:g}s...", file=sys.stderr)
+    with LogCapture(predicate=PREDICATES[args.profile]) as capture:
+        _sleep(args.seconds)
+        summary = capture.stop()
+    _finish_capture(summary, output=args.output, as_json=args.json)
 
 
-def _main_hls_serve(argv: list[str]) -> None:
+# ---------------------------------------------------------------------------
+# local HLS
+
+
+def _hls_serve(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(prog="dolby-tool hls-serve")
     parser.add_argument("directory", help="Prepared HLS directory containing a playlist.")
     parser.add_argument("--playlist", default="master.m3u8", help="Playlist filename to print/open.")
@@ -196,7 +246,6 @@ def _main_hls_serve(argv: list[str]) -> None:
         open_hls_url(url, args.open)
         print(f"Opened in {args.open}.", flush=True)
     print("Press Ctrl-C to stop.", flush=True)
-
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -205,7 +254,7 @@ def _main_hls_serve(argv: list[str]) -> None:
         server.server_close()
 
 
-def _main_hls_prepare(argv: list[str]) -> None:
+def _hls_prepare(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(prog="dolby-tool hls-prepare")
     parser.add_argument("movpkg", help="Persisted-HLS .movpkg directory to flatten.")
     parser.add_argument("output_dir", help="Output HLS directory for hls-serve.")
@@ -214,17 +263,15 @@ def _main_hls_prepare(argv: list[str]) -> None:
     args = parser.parse_args(argv)
 
     summary = prepare_hls_from_movpkg(args.movpkg, args.output_dir, overwrite=args.overwrite)
-    if args.json:
-        print(json.dumps(summary, indent=2, sort_keys=True))
-    else:
-        print(prepare_hls_summary_markdown(summary))
+    _emit(summary, prepare_hls_summary_markdown(summary), as_json=args.json)
 
 
-def _main_hls_package(argv: list[str]) -> None:
-    parser = argparse.ArgumentParser(prog="dolby-tool hls-package")
+def _add_package_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("input", help="Local media file to stream-copy into fMP4 HLS.")
-    parser.add_argument("output_dir", help="Output HLS directory for hls-serve.")
-    parser.add_argument("--overwrite", action="store_true", help="Allow replacing an existing output dir.")
+    parser.add_argument("output_dir", help="Output HLS directory.")
+    parser.add_argument(
+        "--overwrite", action="store_true", help="Replace files from a previous package run in the output dir."
+    )
     parser.add_argument("--audio-stream", type=int, default=0, help="Zero-based input audio stream to map.")
     parser.add_argument("--segment-time", type=float, default=6.0, help="Target HLS segment duration.")
     parser.add_argument(
@@ -233,9 +280,10 @@ def _main_hls_package(argv: list[str]) -> None:
         help="Mux audio and video into one media playlist instead of a separate audio group.",
     )
     parser.add_argument("--json", action="store_true", help="Print JSON instead of Markdown.")
-    args = parser.parse_args(argv)
 
-    summary = package_hls_from_file(
+
+def _package(args: argparse.Namespace) -> dict[str, Any]:
+    return package_hls_from_file(
         args.input,
         args.output_dir,
         overwrite=args.overwrite,
@@ -243,74 +291,91 @@ def _main_hls_package(argv: list[str]) -> None:
         segment_time=args.segment_time,
         split_audio_group=not args.combined,
     )
-    if args.json:
-        print(json.dumps(summary, indent=2, sort_keys=True))
-    else:
-        print(package_hls_summary_markdown(summary))
 
 
-def _main_hls_package_capture(argv: list[str]) -> None:
+def _hls_package(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(prog="dolby-tool hls-package")
+    _add_package_arguments(parser)
+    args = parser.parse_args(argv)
+
+    summary = _package(args)
+    _emit(summary, package_hls_summary_markdown(summary), as_json=args.json)
+
+
+def _hls_package_capture(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(prog="dolby-tool hls-package-capture")
-    parser.add_argument("input", help="Local media file to stream-copy into fMP4 HLS.")
-    parser.add_argument("output_dir", help="Output HLS directory for the temporary server.")
-    parser.add_argument("--overwrite", action="store_true", help="Allow replacing an existing output dir.")
-    parser.add_argument("--audio-stream", type=int, default=0, help="Zero-based input audio stream to map.")
-    parser.add_argument("--segment-time", type=float, default=6.0, help="Target HLS segment duration.")
+    _add_package_arguments(parser)
     parser.add_argument("--seconds", type=float, default=60.0, help="Capture duration after opening QuickTime.")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host; keep loopback for local playback.")
     parser.add_argument("--port", type=int, default=0, help="Bind port. Default 0 uses an ephemeral port.")
     parser.add_argument("--playlist", default="master.m3u8", help="Playlist filename to open.")
     parser.add_argument("--output", help="Optional path to write the structured JSON capture summary.")
-    parser.add_argument(
-        "--combined",
-        action="store_true",
-        help="Mux audio and video into one media playlist instead of a separate audio group.",
-    )
-    parser.add_argument("--json", action="store_true", help="Print JSON instead of Markdown.")
     args = parser.parse_args(argv)
 
-    package_summary = package_hls_from_file(
-        args.input,
-        args.output_dir,
-        overwrite=args.overwrite,
-        audio_stream=args.audio_stream,
-        segment_time=args.segment_time,
-        split_audio_group=not args.combined,
-    )
+    package_summary = _package(args)
     with running_hls_server(args.output_dir, host=args.host, port=args.port, quiet=True) as server:
         url = playlist_url(server, args.playlist)
-        capture = LogCapture(predicate=LOCAL_PLAYER_PREDICATE)
         print(f"Serving HLS from {args.output_dir}", file=sys.stderr, flush=True)
         print(f"Opening QuickTime URL: {url}", file=sys.stderr, flush=True)
         print(f"Capturing local-player playback logs for {args.seconds:g}s...", file=sys.stderr, flush=True)
-        capture.start()
-        open_hls_url(url, "quicktime")
-        try:
-            time.sleep(max(args.seconds, 0))
-        except KeyboardInterrupt:
-            pass
-        summary = capture.stop()
+        with LogCapture(predicate=LOCAL_PLAYER_PREDICATE) as capture:
+            open_hls_url(url, "quicktime")
+            _sleep(args.seconds)
+            summary = capture.stop()
     summary["hls_package"] = package_summary
     summary["hls_url"] = url
-    if args.output:
-        with open(args.output, "w", encoding="utf-8") as f:
-            json.dump(summary, f, indent=2, sort_keys=True)
-            f.write("\n")
-    _print_tvlog_summary(summary, as_json=args.json)
+    _finish_capture(summary, output=args.output, as_json=args.json)
 
 
-def _predicate_for_profile(profile: str) -> str:
-    if profile == "local-player":
-        return LOCAL_PLAYER_PREDICATE
-    return PREDICATE
+# ---------------------------------------------------------------------------
+# MKV → Apple TV (.m4v) conversion — imported lazily: it pulls in the HTTP client
 
 
-def _print_tvlog_summary(summary: dict, *, as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(summary, indent=2, sort_keys=True))
-    else:
-        print(tvlog_summary_markdown(summary))
+def _convert(argv: list[str]) -> None:
+    from .convert.commands import main_convert
+
+    main_convert(argv)
 
 
-if __name__ == "__main__":
-    main()
+def _tag(argv: list[str]) -> None:
+    from .convert.commands import main_tag
+
+    main_tag(argv)
+
+
+# ---------------------------------------------------------------------------
+# helpers
+
+
+def _emit(data: Any, markdown: str, *, as_json: bool) -> None:
+    print(json.dumps(data, indent=2, sort_keys=True) if as_json else markdown)
+
+
+def _sleep(seconds: float) -> None:
+    try:
+        time.sleep(max(seconds, 0))
+    except KeyboardInterrupt:
+        pass
+
+
+def _finish_capture(summary: dict[str, Any], *, output: str | None, as_json: bool) -> None:
+    if output:
+        Path(output).write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _emit(summary, tvlog_summary_markdown(summary), as_json=as_json)
+
+
+COMMANDS: dict[str, Command] = {
+    "serve": Command("Start the web UI (the default when no command is given).", _serve),
+    "inspect": Command("Inspect one file: Dolby Vision, HDR, Atmos, tracks.", _inspect),
+    "compare": Command("Score and rank several files against each other.", _compare),
+    "tvlog-capture": Command("Capture TV.app / QuickTime playback logs for N seconds (macOS).", _tvlog_capture),
+    "tvlog-parse": Command("Summarise a saved `log stream` capture.", _tvlog_parse),
+    "movpkg": Command("Inventory a downloaded TV.app .movpkg package.", _movpkg),
+    "movpkg-scan": Command("Inventory every .movpkg under a folder.", _movpkg_scan),
+    "hls-package": Command("Package a local file as fMP4 HLS for QuickTime/Safari tests.", _hls_package),
+    "hls-package-capture": Command("hls-package + serve + open QuickTime + capture logs.", _hls_package_capture),
+    "hls-prepare": Command("Flatten a persisted-HLS .movpkg into a servable folder.", _hls_prepare),
+    "hls-serve": Command("Serve an HLS folder with byte-range support (loopback).", _hls_serve),
+    "convert": Command("Remux MKV → Apple-TV-ready .m4v (+ optional Apple TV metadata).", _convert),
+    "tag": Command("Write Apple TV metadata/artwork into existing .m4v/.mp4 files.", _tag),
+}
