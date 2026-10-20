@@ -17,12 +17,16 @@ import threading
 import time
 from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Any, Self
+from typing import IO, Any, Self
 
 from ..common import ToolError
 from .parser import Event, parse_line
 from .predicates import PREDICATE
 from .summary import CaptureState, build_summary
+
+# How long `log stream` gets to exit after SIGINT before it is killed, and how long
+# stop() then waits for the reader thread to drain the pipe.
+STOP_TIMEOUT_S = 2.0
 
 
 def log_stream_command(predicate: str) -> list[str]:
@@ -31,7 +35,10 @@ def log_stream_command(predicate: str) -> list[str]:
 
 
 class LogCapture:
-    """Runs `log stream` (or any line-printing `command`) and folds its output into a summary."""
+    """Runs `log stream` (or any line-printing `command`) and folds its output into a summary.
+
+    A stopped capture can be started again; each start begins a fresh summary.
+    """
 
     def __init__(
         self,
@@ -42,11 +49,15 @@ class LogCapture:
     ) -> None:
         self.predicate = predicate
         self.command = list(command) if command is not None else log_stream_command(predicate)
+        self._raw_event_limit = raw_event_limit
         self._state = CaptureState(raw_event_limit)
-        self._proc: subprocess.Popen | None = None
+        # The reader thread folds events into _state while callers may summarize it.
+        self._lock = threading.Lock()
+        self._proc: subprocess.Popen[str] | None = None
         self._reader: threading.Thread | None = None
-        self._stop = threading.Event()
-        self._started_at: float | None = None
+        self._started_at: float | None = None  # wall clock, reported in the summary
+        self._started_clock: float | None = None  # monotonic, for duration_s
+        self._stopped_clock: float | None = None
         self._listeners: list[asyncio.Queue] = []
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -69,7 +80,7 @@ class LogCapture:
         if self._proc is not None:
             return
         try:
-            self._proc = subprocess.Popen(
+            proc = subprocess.Popen(
                 self.command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -79,24 +90,27 @@ class LogCapture:
         except OSError as e:
             name = Path(self.command[0]).name
             raise ToolError(f"could not start {name}: {e.strerror or e}", cmd=self.command) from e
+        with self._lock:
+            self._state = CaptureState(self._raw_event_limit)
+        self._proc = proc
         self._loop = loop or _running_loop()
         self._started_at = time.time()
-        self._reader = threading.Thread(target=self._read_loop, daemon=True)
+        self._started_clock = time.monotonic()
+        self._stopped_clock = None
+        self._reader = threading.Thread(target=self._read_lines, args=(proc.stdout,), daemon=True)
         self._reader.start()
 
     def stop(self) -> dict[str, Any]:
-        self._stop.set()
-        proc = self._proc
-        if proc and proc.poll() is None:
-            try:
-                proc.send_signal(signal.SIGINT)
-                proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-        if self._reader and self._reader.is_alive():
-            self._reader.join(timeout=2)
-        self._proc = None
-        self._reader = None
+        """Stop the command, let the reader drain its output and return the summary.
+
+        Calling it again (or on a capture that never started) returns the same summary.
+        """
+        proc, self._proc = self._proc, None
+        if proc is not None:
+            self._stopped_clock = time.monotonic()
+            _terminate(proc)
+            if self._reader is not None:
+                self._reader.join(timeout=STOP_TIMEOUT_S)
         return self.summarize()
 
     def __enter__(self) -> Self:
@@ -119,22 +133,21 @@ class LogCapture:
 
     # -- reader thread -----------------------------------------------------
 
-    def _read_loop(self) -> None:
-        proc = self._proc
-        if not proc or not proc.stdout:
-            return
-        for line in proc.stdout:
-            if self._stop.is_set():
-                break
-            event = parse_line(line)
-            if not event:
-                continue
-            event["ts"] = time.time()
-            self.add_event(event)
-            self._broadcast(event)
+    def _read_lines(self, stdout: IO[str]) -> None:
+        """Parse the command's output until it exits, then close the pipe."""
+        with stdout:
+            for line in stdout:
+                event = parse_line(line)
+                if not event:
+                    continue
+                event["ts"] = time.time()
+                self.add_event(event)
+                self._broadcast(event)
 
     def add_event(self, event: Event) -> None:
-        self._state.add(event)
+        """Fold one parsed event into the running totals."""
+        with self._lock:
+            self._state.add(event)
 
     def _broadcast(self, event: Event) -> None:
         loop = self._loop
@@ -148,12 +161,32 @@ class LogCapture:
     # -- summary -----------------------------------------------------------
 
     def summarize(self) -> dict[str, Any]:
-        return build_summary(
-            self._state,
-            predicate=self.predicate,
-            started_at=self._started_at,
-            duration_s=time.time() - self._started_at if self._started_at else 0,
-        )
+        """The playback summary so far; safe to call while the capture is running."""
+        with self._lock:
+            return build_summary(
+                self._state,
+                predicate=self.predicate,
+                started_at=self._started_at,
+                duration_s=self._duration(),
+            )
+
+    def _duration(self) -> float:
+        if self._started_clock is None:
+            return 0
+        end = self._stopped_clock if self._stopped_clock is not None else time.monotonic()
+        return end - self._started_clock
+
+
+def _terminate(proc: subprocess.Popen[str]) -> None:
+    """Interrupt `log stream` like Ctrl-C does, kill it if it lingers, and reap it."""
+    if proc.poll() is not None:
+        return
+    proc.send_signal(signal.SIGINT)
+    try:
+        proc.wait(timeout=STOP_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
 
 
 def _running_loop() -> asyncio.AbstractEventLoop | None:

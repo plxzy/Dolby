@@ -5,13 +5,14 @@ log lines, so they run anywhere.
 """
 
 import asyncio
+import signal
 import sys
 import time
 from collections.abc import Callable
 
 import pytest
 
-from dolby_tool.capture import PREDICATE, LogCapture, parse_line
+from dolby_tool.capture import PREDICATE, LogCapture, parse_line, session
 from dolby_tool.common import ToolError
 
 LINES = (
@@ -175,3 +176,58 @@ def test_context_manager_starts_and_stops_the_capture():
 
     assert capture._proc is None
     assert capture.stop()["event_count"] == len(LINES)
+
+
+def test_stop_kills_and_reaps_a_process_that_ignores_sigint(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(session, "STOP_TIMEOUT_S", 0.2)
+    stubborn = (
+        "import signal, sys, time\n"
+        "signal.signal(signal.SIGINT, signal.SIG_IGN)\n"
+        "print(sys.argv[1], flush=True)\n"
+        "time.sleep(60)\n"
+    )
+    capture = LogCapture(command=[sys.executable, "-c", stubborn, LINES[1]])
+    capture.start()
+    _wait_until(lambda: _event_count(capture) == 1)
+    proc = capture._proc
+
+    summary = capture.stop()
+
+    assert proc.returncode == -signal.SIGKILL
+    assert proc.stdout.closed
+    assert summary["event_count"] == 1
+
+
+def test_stop_is_idempotent():
+    capture = LogCapture(command=_printing(*LINES))
+    capture.start()
+    _wait_until(lambda: _event_count(capture) == len(LINES))
+
+    first = capture.stop()
+    time.sleep(0.01)
+
+    assert capture.stop() == first
+    assert first["duration_s"] > 0
+
+
+def test_stop_without_start_returns_an_empty_summary():
+    summary = LogCapture().stop()
+
+    assert summary["event_count"] == 0
+    assert summary["playback"] is None
+    assert summary["duration_s"] == 0
+
+
+def test_a_stopped_capture_can_be_started_again_from_scratch():
+    capture = LogCapture(command=_printing(LINES[2]))
+    capture.start()
+    _wait_until(lambda: _event_count(capture) == 1)
+    capture.stop()
+
+    capture.command = _printing(*LINES[:2])
+    capture.start()
+    _wait_until(lambda: _event_count(capture) == 2)
+    summary = capture.stop()
+
+    assert [event["kind"] for event in summary["events"]] == ["hls_variant", "codec_type"]
+    assert "audio" not in summary["playback"]
