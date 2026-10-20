@@ -135,3 +135,13 @@ def test_movpkg_scan_skips_interstitial_child_packages(tmp_path):
     rendered = movpkg_scan_markdown(scan)
     assert "top-level packages: 1" in rendered
     assert "No complete main Atmos" in rendered
+
+
+def test_movpkg_scan_root_inside_a_package_still_finds_its_children(tmp_path):
+    episode = tmp_path / "Episode.movpkg"
+    interstitials = episode / "InterstitialAssets"
+    preroll = interstitials / "preroll.movpkg"
+    nested = preroll / "Extra.movpkg"
+    nested.mkdir(parents=True)
+
+    assert find_top_level_movpkgs(interstitials) == [preroll]

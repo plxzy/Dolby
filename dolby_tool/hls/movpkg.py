@@ -8,6 +8,9 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+from ..common import to_int
+from .playlist import parse_attributes
+
 SEARCH_TERMS = [
     "audio-atmos",
     "audio-stereo",
@@ -21,6 +24,12 @@ SEARCH_TERMS = [
     "accessibility",
     "public.accessibility.describes-video",
 ]
+
+# Ways Apple URLs and paths carry the variant group number; the first pattern that matches wins.
+_GROUP_NUM_PATTERNS = tuple(
+    re.compile(pattern) for pattern in (r"[?&]g=(\d+)", r"_gr(\d+)_", r"-gr(\d+)-", r"/gr(\d+)[/_-]")
+)
+_AD_WORD = re.compile(r"\bad\b")
 
 
 def analyze_movpkg(path: str | Path, selected_group: str | None = None) -> dict[str, Any]:
@@ -57,12 +66,12 @@ def find_top_level_movpkgs(root: str | Path) -> list[Path]:
     if root_path.suffix == ".movpkg":
         return [root_path]
 
-    packages: list[Path] = []
-    for path in root_path.rglob("*.movpkg"):
-        if any(parent.suffix == ".movpkg" for parent in path.parents):
-            continue
-        packages.append(path)
-    return sorted(packages)
+    # Only parents below the root count: the root itself may sit inside a package.
+    return sorted(
+        path
+        for path in root_path.rglob("*.movpkg")
+        if not any(parent.suffix == ".movpkg" for parent in path.relative_to(root_path).parents)
+    )
 
 
 def scan_movpkgs(root: str | Path, selected_group: str | None = None) -> dict[str, Any]:
@@ -207,24 +216,20 @@ def _manifest_inventory(movpkg: Path, files: list[tuple[Path, int]], errors: lis
 
     for path, _size in files:
         lname = path.name.lower()
-        is_manifest = lname in {"boot.xml", "root.xml", "playlist.m3u8"} or lname.endswith((".xml", ".m3u8"))
-        if is_manifest:
-            manifest_like.append(path)
+        if not lname.endswith((".xml", ".m3u8")):
+            continue
+        manifest_like.append(path)
         if lname == "boot.xml":
             boot_xml.append(path)
-        if lname == "root.xml":
+        elif lname == "root.xml":
             root_xml.append(path)
-        if lname == "streaminfoboot.xml":
+        elif lname == "streaminfoboot.xml":
             stream_info.append(path)
-        if lname.endswith(".m3u8") or lname == "playlist.m3u8":
+        elif lname.endswith(".m3u8"):
             playlists.append(path)
-        if is_manifest:
-            text = _safe_text(path, errors, limit=2_000_000)
-            if text is None:
-                continue
-            for term in SEARCH_TERMS:
-                if term in text:
-                    content_hits[term] += 1
+        text = _safe_text(path, errors, limit=2_000_000)
+        if text is not None:
+            content_hits.update(term for term in SEARCH_TERMS if term in text)
 
     return {
         "manifest_like": manifest_like,
@@ -275,7 +280,7 @@ def _stream_inventory(
             "scope": "interstitial" if rel.startswith("InterstitialAssets/") else "main",
             "g": g,
             "complete": _text_by_local(root, "Complete"),
-            "media_bytes_stored": _int(_text_by_local(root, "MediaBytesStored")) or 0,
+            "media_bytes_stored": to_int(_text_by_local(root, "MediaBytesStored")) or 0,
             "network_url": network_url,
             "path": local_path,
             "dir_file_counts": dict(counts),
@@ -312,13 +317,13 @@ def _playlist_inventory(
         pending_stream: dict[str, str] | None = None
         for line in lines:
             if line.startswith("#EXT-X-MEDIA:"):
-                attrs = _parse_hls_attrs(line.split(":", 1)[1])
+                attrs = parse_attributes(line.split(":", 1)[1])
                 if attrs.get("TYPE") == "AUDIO":
                     attrs["playlist_rel"] = str(path.relative_to(movpkg))
                     attrs["g"] = _group_num_from_text(json.dumps(attrs)) or ""
                     media_rows.append(attrs)
             elif line.startswith("#EXT-X-STREAM-INF:"):
-                pending_stream = _parse_hls_attrs(line.split(":", 1)[1])
+                pending_stream = parse_attributes(line.split(":", 1)[1])
             elif pending_stream is not None and not line.startswith("#"):
                 row = pending_stream
                 row["uri"] = line
@@ -444,7 +449,7 @@ def _group_kind(group: str) -> str | None:
 def _classify_group(group: str, name: str = "", role: str = "", codecs: str = "", channels: str = "") -> str:
     haystack = " ".join([group or "", name or "", role or "", codecs or "", channels or ""]).lower()
     labels = []
-    if "describes-video" in haystack or "audio description" in haystack or re.search(r"\bad\b", haystack):
+    if "describes-video" in haystack or "audio description" in haystack or _AD_WORD.search(haystack):
         labels.append("AD")
     if "atmos" in haystack or "16/joc" in haystack or "ec-3" in haystack:
         labels.append("Atmos")
@@ -452,46 +457,14 @@ def _classify_group(group: str, name: str = "", role: str = "", codecs: str = ""
         labels.append("5.1")
     if "stereo" in haystack or "mp4a.40.2" in haystack or channels == "2":
         labels.append("stereo")
-    return ", ".join(dict.fromkeys(labels or ["unknown"]))
-
-
-def _parse_hls_attrs(text: str) -> dict[str, str]:
-    attrs: dict[str, str] = {}
-    key = ""
-    value = ""
-    in_key = True
-    in_quote = False
-    items: list[tuple[str, str]] = []
-    for char in text:
-        if in_key:
-            if char == "=":
-                in_key = False
-            else:
-                key += char
-        elif char == '"':
-            in_quote = not in_quote
-            value += char
-        elif char == "," and not in_quote:
-            items.append((key.strip(), value.strip()))
-            key = ""
-            value = ""
-            in_key = True
-        else:
-            value += char
-    if key:
-        items.append((key.strip(), value.strip()))
-    for item_key, item_value in items:
-        if len(item_value) >= 2 and item_value[0] == '"' and item_value[-1] == '"':
-            item_value = item_value[1:-1]
-        attrs[item_key] = item_value
-    return attrs
+    return ", ".join(labels or ["unknown"])
 
 
 def _group_num_from_text(text: str | None) -> str | None:
     if not text:
         return None
-    for pattern in (r"[?&]g=(\d+)", r"_gr(\d+)_", r"-gr(\d+)-", r"/gr(\d+)[/_-]"):
-        if match := re.search(pattern, text):
+    for pattern in _GROUP_NUM_PATTERNS:
+        if match := pattern.search(text):
             return match.group(1)
     return None
 
@@ -528,11 +501,11 @@ def _text_by_local(root: ET.Element, name: str) -> str | None:
     return None
 
 
-def _int(value: Any) -> int | None:
-    try:
-        return int(value) if value is not None else None
-    except TypeError, ValueError:
-        return None
-
-
-__all__ = ["SEARCH_TERMS", "analyze_movpkg", "movpkg_summary_markdown"]
+__all__ = [
+    "SEARCH_TERMS",
+    "analyze_movpkg",
+    "find_top_level_movpkgs",
+    "movpkg_scan_markdown",
+    "movpkg_summary_markdown",
+    "scan_movpkgs",
+]
