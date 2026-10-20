@@ -8,6 +8,9 @@ logic, scoped to the endpoints we actually use:
 - `view/show/{id}/episodes` — TV episode list (with skip/count paging)
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any
@@ -15,6 +18,7 @@ from urllib.parse import quote
 
 import httpx
 
+from ...common import to_int
 from .artwork import Artwork, from_image
 from .ratings import MEDIA_MOVIE, MEDIA_TV, Rating, lookup
 from .storefronts import Store
@@ -30,15 +34,38 @@ def _normalize(term: str) -> str:
     return term.replace(" (Dubbed)", "").replace(" (Subtitled)", "").replace(" (Ex-tended Edition)", "")
 
 
-def _get(url: str, timeout: float = 20.0) -> dict[str, Any] | None:
-    with httpx.Client(timeout=timeout, follow_redirects=True, headers={"User-Agent": "dolby-tool/0.1"}) as c:
-        r = c.get(url)
-        if r.status_code != 200:
-            return None
+_client: ContextVar[httpx.Client | None] = ContextVar("apple_tv_client", default=None)
+
+
+@contextmanager
+def session(timeout: float = 20.0) -> Iterator[httpx.Client]:
+    """Share one HTTP client (and its connection) across all requests of a lookup.
+
+    Nested sessions reuse the outer client, so the public search/fetch functions
+    can open one themselves and a caller can still wrap several of them.
+    """
+    if (current := _client.get()) is not None:
+        yield current
+        return
+    with httpx.Client(timeout=timeout, follow_redirects=True, headers={"User-Agent": "dolby-tool/0.1"}) as client:
+        token = _client.set(client)
         try:
-            return r.json()
-        except ValueError:
+            yield client
+        finally:
+            _client.reset(token)
+
+
+def _get(url: str) -> dict[str, Any] | None:
+    """GET a catalog URL and return its JSON object; None on any HTTP, transport or decoding failure."""
+    with session() as client:
+        try:
+            r = client.get(url)
+            if r.status_code != 200:
+                return None
+            payload = r.json()
+        except httpx.HTTPError, ValueError:
             return None
+    return payload if isinstance(payload, dict) else None
 
 
 @dataclass
@@ -95,11 +122,13 @@ class Metadata:
 
 
 def search_movies(term: str, store: Store) -> list[SearchHit]:
-    return _search(term, store, kind="Movie")
+    with session():
+        return _search(term, store, kind="Movie")
 
 
 def search_shows(term: str, store: Store) -> list[SearchHit]:
-    return _search(term, store, kind="Show")
+    with session():
+        return _search(term, store, kind="Show")
 
 
 def _search(term: str, store: Store, *, kind: str) -> list[SearchHit]:
@@ -110,11 +139,10 @@ def _search(term: str, store: Store, *, kind: str) -> list[SearchHit]:
         return []
     canvas = (payload.get("data") or {}).get("canvas") or {}
     hits: list[SearchHit] = []
-    for shelf in canvas.get("shelves", []):
-        for item in shelf.get("items", []):
-            if item.get("type") != kind:
-                continue
-            hits.append(_to_hit(item))
+    for shelf in canvas.get("shelves") or []:
+        for item in shelf.get("items") or []:
+            if item.get("type") == kind and item.get("id"):
+                hits.append(_to_hit(item))
     return hits
 
 
@@ -136,6 +164,11 @@ def _to_hit(item: dict[str, Any]) -> SearchHit:
 
 
 def fetch_movie(hit: SearchHit, store: Store) -> Metadata:
+    with session():
+        return _fetch_movie(hit, store)
+
+
+def _fetch_movie(hit: SearchHit, store: Store) -> Metadata:
     meta = Metadata(
         media_kind="movie",
         title=hit.title,
@@ -162,7 +195,7 @@ def _enrich_with_details(meta: Metadata, content_id: str, store: Store, *, media
     content = data.get("content") or {}
     roles = data.get("roles") or []
 
-    meta.genres = [g["name"] for g in content.get("genres", []) if "name" in g]
+    meta.genres = [g["name"] for g in content.get("genres") or [] if g.get("name")]
     meta.studio = content.get("studio")
     meta.short_description = content.get("description") or meta.short_description
 
@@ -180,7 +213,7 @@ def _enrich_with_details(meta: Metadata, content_id: str, store: Store, *, media
         meta.series_description = content.get("description") or meta.series_description
 
     def names(of_type: str) -> list[str]:
-        return [r["personName"] for r in roles if r.get("type") == of_type]
+        return [r["personName"] for r in roles if r.get("type") == of_type and r.get("personName")]
 
     meta.cast = names("Actor") + names("Voice") or meta.cast
     meta.screenwriters = names("Writer")
@@ -216,15 +249,14 @@ def fetch_seasons(show_id: str, store: Store) -> list[tuple[int, int]]:
     # the two sources differ in order or length.
     pairs: list[tuple[int, int]] = []
     for s in summaries:
-        n = s.get("seasonNumber") or s.get("season") or s.get("number")
-        c = s.get("episodeCount") or s.get("count") or 0
+        n = to_int(s.get("seasonNumber") or s.get("season") or s.get("number"))
         if n is not None:
-            pairs.append((int(n), int(c)))
+            pairs.append((n, to_int(s.get("episodeCount") or s.get("count")) or 0))
 
     if not pairs:
         # Last-resort fallback: derive season list from availableChannels with
         # zero counts (caller will then need to fetch more pages).
-        available = sorted({s for c in (data.get("availableChannels") or []) for s in c.get("seasonNumbers", [])})
+        available = sorted({s for c in data.get("availableChannels") or [] for s in c.get("seasonNumbers") or []})
         pairs = [(n, 0) for n in available]
 
     pairs.sort(key=lambda p: p[0])
@@ -243,6 +275,11 @@ def fetch_episodes(show_id: str, store: Store, *, skip: int, count: int) -> list
 
 def fetch_episode(show_hit: SearchHit, season: int, episode: int, store: Store) -> Metadata | None:
     """Find a single episode by (season, episode) within a show search hit."""
+    with session():
+        return _fetch_episode(show_hit, season, episode, store)
+
+
+def _fetch_episode(show_hit: SearchHit, season: int, episode: int, store: Store) -> Metadata | None:
     seasons = fetch_seasons(show_hit.id, store)
     season_index = next((i for i, (n, _) in enumerate(seasons) if n == season), -1)
     if season_index < 0:
@@ -264,7 +301,7 @@ def fetch_episode(show_hit: SearchHit, season: int, episode: int, store: Store) 
         series_description=show_hit.description,
         season=ep.get("seasonNumber"),
         episode_number=ep.get("episodeNumber"),
-        episode_id=f"{ep.get('seasonNumber', 0)}{ep.get('episodeNumber', 0):02d}",
+        episode_id=f"{ep.get('seasonNumber') or 0}{ep.get('episodeNumber') or 0:02d}",
         service_content_id=show_hit.id,
         service_episode_id=ep.get("id"),
         itunes_url=ep.get("showUrl"),
