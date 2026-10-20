@@ -1,12 +1,11 @@
 """Stream-copy a local media file into fMP4 HLS that QuickTime and Safari can play from `hls-serve`."""
 
-import json
 import shutil
-import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Self
 
+from ..common import ffprobe_json, run_tool
 from .playlist import MASTER_PLAYLIST, playlist_references, set_attribute
 
 # HEVC Dolby Vision sample entries; the HLS CODECS attribute needs a profile/level suffix for them.
@@ -69,7 +68,7 @@ def package_hls_from_file(
         segment_time=segment_time,
         split_audio_group=split_audio_group,
     )
-    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+    result = run_tool(cmd)
     _patch_master_playlist(output / MASTER_PLAYLIST, tags)
     return {
         "source": str(source),
@@ -125,6 +124,7 @@ def _ffmpeg_command(
     return [
         "ffmpeg",
         "-hide_banner",
+        "-nostdin",
         "-y" if overwrite else "-n",
         "-i",
         str(source),
@@ -164,13 +164,7 @@ def _clear_directory(path: Path) -> None:
 
 
 def _probe_master_tags(source: Path, *, audio_stream: int) -> MasterTags:
-    result = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(source)],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    streams = json.loads(result.stdout or "{}").get("streams", [])
+    streams = ffprobe_json(source, "-show_streams").get("streams", [])
     video = next((stream for stream in streams if stream.get("codec_type") == "video"), None)
     audio_streams = [stream for stream in streams if stream.get("codec_type") == "audio"]
     audio = audio_streams[audio_stream] if audio_stream < len(audio_streams) else None

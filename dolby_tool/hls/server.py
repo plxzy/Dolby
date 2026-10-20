@@ -2,7 +2,6 @@
 
 import contextlib
 import os
-import subprocess
 import threading
 from collections.abc import Iterator
 from functools import partial
@@ -12,6 +11,7 @@ from pathlib import Path
 from typing import BinaryIO
 from urllib.parse import quote
 
+from ..common import run_tool
 from .playlist import MASTER_PLAYLIST
 
 # `--open` choices and the macOS application each one launches.
@@ -159,4 +159,4 @@ def open_hls_url(url: str, app: str) -> None:
     """Open `url` in QuickTime Player or Safari (`app` is a `--open` choice; "none" does nothing)."""
     if app == "none":
         return
-    subprocess.run(["open", "-a", _PLAYER_APPS[app], url], check=False)
+    run_tool(["open", "-a", _PLAYER_APPS[app], url], check=False)
