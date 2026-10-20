@@ -111,7 +111,8 @@ async def _pump(ws: WebSocket, queue: asyncio.Queue[dict[str, Any]]) -> None:
 
 
 def _start_error(error: Exception) -> str:
-    if isinstance(error, FileNotFoundError):
+    # LogCapture reports a missing binary as ToolError chained from FileNotFoundError.
+    if isinstance(error, FileNotFoundError) or isinstance(error.__cause__, FileNotFoundError):
         return "`log stream` is not available here — live capture needs macOS. Use “Import saved log” instead."
     return f"could not start capture: {error}"
 

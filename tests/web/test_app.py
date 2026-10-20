@@ -235,8 +235,16 @@ def test_websocket_capture_round_trip(client, fake_capture):
     assert fake_capture.instances[0].stopped == 1
 
 
-def test_websocket_reports_missing_log_binary(client, fake_capture):
-    fake_capture.fail_with = FileNotFoundError("log")
+def _missing_log_error() -> ToolError:
+    try:
+        raise ToolError("could not start log: No such file or directory") from FileNotFoundError("log")
+    except ToolError as e:
+        return e
+
+
+@pytest.mark.parametrize("failure", [FileNotFoundError("log"), _missing_log_error()])
+def test_websocket_reports_missing_log_binary(client, fake_capture, failure):
+    fake_capture.fail_with = failure
     with client.websocket_connect(WS_URL) as ws:
         ws.send_json({"cmd": "start"})
         error = ws.receive_json()
