@@ -15,7 +15,6 @@ Pipeline:
 This is the one piece of Subler we don't try to faithfully replicate
 in-process — bdsup2sub already does the palette/timing work well.
 """
-from __future__ import annotations
 
 import shutil
 import subprocess
@@ -65,9 +64,15 @@ def convert_and_remux(
         for s in pgs_streams:
             sup_path = tmp / f"sub_{s.index}.sup"
             extract_cmd = [
-                "ffmpeg", "-hide_banner", "-y",
-                "-i", str(source_mkv),
-                "-map", f"0:{s.index}", "-c:s", "copy",
+                "ffmpeg",
+                "-hide_banner",
+                "-y",
+                "-i",
+                str(source_mkv),
+                "-map",
+                f"0:{s.index}",
+                "-c:s",
+                "copy",
                 str(sup_path),
             ]
             r = subprocess.run(extract_cmd, capture_output=True, text=True)
@@ -112,9 +117,9 @@ def convert_and_remux(
 def _count_subtitle_streams(mp4: Path) -> int:
     """Return how many subtitle streams already live in `mp4` (0 if probe fails)."""
     r = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "s",
-         "-show_entries", "stream=index", "-of", "csv=p=0", str(mp4)],
-        capture_output=True, text=True,
+        ["ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream=index", "-of", "csv=p=0", str(mp4)],
+        capture_output=True,
+        text=True,
     )
     if r.returncode != 0:
         return 0

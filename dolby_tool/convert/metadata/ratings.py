@@ -2,7 +2,6 @@
 
 Produces iTunes `iTunEXTC`-style strings (e.g. `mpaa|PG-13|300|`) that TV.app reads.
 """
-from __future__ import annotations
 
 import json
 from dataclasses import dataclass

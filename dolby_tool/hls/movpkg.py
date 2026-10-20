@@ -1,7 +1,5 @@
 """Inspect Apple TV.app downloaded `.movpkg` package inventories."""
 
-from __future__ import annotations
-
 import json
 import os
 import re
@@ -134,9 +132,7 @@ def movpkg_summary_markdown(summary: dict[str, Any]) -> str:
 def _compact_scan_row(summary: dict[str, Any]) -> dict[str, Any]:
     audio_rows = summary.get("audio_table", [])
     complete_main_audio = _unique_descriptions(
-        row
-        for row in audio_rows
-        if row.get("has_complete_main_stream") and row.get("group", "").startswith("audio-")
+        row for row in audio_rows if row.get("has_complete_main_stream") and row.get("group", "").startswith("audio-")
     )
     atmos_rows = [row for row in audio_rows if "Atmos" in row.get("looks_like", "")]
     complete_main_atmos = [row for row in atmos_rows if row.get("has_complete_main_stream")]
@@ -535,7 +531,7 @@ def _text_by_local(root: ET.Element, name: str) -> str | None:
 def _int(value: Any) -> int | None:
     try:
         return int(value) if value is not None else None
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 

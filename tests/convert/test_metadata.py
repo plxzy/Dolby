@@ -2,7 +2,6 @@
 
 No network — these only exercise the JSON data + parsing code.
 """
-from __future__ import annotations
 
 import pytest
 

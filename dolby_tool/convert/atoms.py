@@ -25,7 +25,6 @@ This module intentionally does NOT try to insert `dvcC`/`dvvC` when missing.
 If ffmpeg dropped them, demux/remux with `ffmpeg -strict unofficial` upstream;
 adding them safely requires a full moov rewrite (TODO).
 """
-from __future__ import annotations
 
 import struct
 from dataclasses import dataclass, field
@@ -34,30 +33,52 @@ from typing import BinaryIO
 
 # Container boxes — children are themselves boxes (recurse into them).
 _CONTAINERS = {
-    b"moov", b"trak", b"mdia", b"minf", b"stbl",
-    b"udta", b"edts", b"mvex", b"moof", b"traf", b"mfra",
+    b"moov",
+    b"trak",
+    b"mdia",
+    b"minf",
+    b"stbl",
+    b"udta",
+    b"edts",
+    b"mvex",
+    b"moof",
+    b"traf",
+    b"mfra",
 }
 
 # Sample-entry containers (under stsd) whose payload starts with a fixed
 # header then nested child boxes. We recurse into their children at offset 8.
 _SAMPLE_ENTRY_CODECS = {
     # video
-    b"avc1", b"avc3", b"hvc1", b"hev1", b"hev2", b"dvh1", b"dvhe", b"dva1", b"dvav",
+    b"avc1",
+    b"avc3",
+    b"hvc1",
+    b"hev1",
+    b"hev2",
+    b"dvh1",
+    b"dvhe",
+    b"dva1",
+    b"dvav",
     # audio
-    b"mp4a", b"ac-3", b"ec-3", b"ac-4", b"alac", b"opus",
+    b"mp4a",
+    b"ac-3",
+    b"ec-3",
+    b"ac-4",
+    b"alac",
+    b"opus",
 }
 _SAMPLE_ENTRY_HEADER_LEN = {"video": 78, "audio": 28}  # bytes after the box header
 
 
 @dataclass
 class Box:
-    type: bytes                  # 4-byte fourcc
-    offset: int                  # absolute file offset of the box header
-    header_size: int             # 8 (or 16 if largesize)
-    size: int                    # total box size including header
-    payload_offset: int = 0      # offset where children/payload starts
-    parent: "Box | None" = None
-    children: list["Box"] = field(default_factory=list)
+    type: bytes  # 4-byte fourcc
+    offset: int  # absolute file offset of the box header
+    header_size: int  # 8 (or 16 if largesize)
+    size: int  # total box size including header
+    payload_offset: int = 0  # offset where children/payload starts
+    parent: Box | None = None
+    children: list[Box] = field(default_factory=list)
 
     @property
     def end(self) -> int:
@@ -67,7 +88,7 @@ class Box:
     def payload_size(self) -> int:
         return self.end - self.payload_offset
 
-    def find(self, type_path: bytes | tuple[bytes, ...]) -> "Box | None":
+    def find(self, type_path: bytes | tuple[bytes, ...]) -> Box | None:
         if isinstance(type_path, bytes):
             type_path = (type_path,)
         node: Box | None = self
@@ -77,7 +98,7 @@ class Box:
             node = next((c for c in node.children if c.type == t), None)
         return node
 
-    def find_all(self, type_: bytes) -> list["Box"]:
+    def find_all(self, type_: bytes) -> list[Box]:
         return [c for c in self.children if c.type == type_]
 
 
@@ -109,8 +130,12 @@ def _parse_range(f: BinaryIO, start: int, end: int, *, parent: Box | None) -> li
         if size < header_size or pos + size > end:
             break
         box = Box(
-            type=type_, offset=pos, header_size=header_size, size=size,
-            payload_offset=pos + header_size, parent=parent,
+            type=type_,
+            offset=pos,
+            header_size=header_size,
+            size=size,
+            payload_offset=pos + header_size,
+            parent=parent,
         )
         if type_ in _CONTAINERS:
             box.children = _parse_range(f, box.payload_offset, box.end, parent=box)
@@ -152,6 +177,7 @@ def find_path(boxes: list[Box], path: tuple[bytes, ...]) -> Box | None:
 
 # --------------------------------------------------------------------- colr
 
+
 def patch_colr_nclx(path: Path, primaries: int, transfer: int, matrix: int, full_range: bool) -> bool:
     """Walk every video sample entry's `colr` child and ensure it's the `nclx` variant.
 
@@ -168,8 +194,7 @@ def patch_colr_nclx(path: Path, primaries: int, transfer: int, matrix: int, full
             if not stsd:
                 continue
             for entry in stsd.children:
-                if entry.type not in {b"avc1", b"avc3", b"hvc1", b"hev1", b"hev2",
-                                       b"dvh1", b"dvhe", b"dva1", b"dvav"}:
+                if entry.type not in {b"avc1", b"avc3", b"hvc1", b"hev1", b"hev2", b"dvh1", b"dvhe", b"dva1", b"dvav"}:
                     continue
                 colr = next((c for c in entry.children if c.type == b"colr"), None)
                 if colr is None:
@@ -186,6 +211,7 @@ def patch_colr_nclx(path: Path, primaries: int, transfer: int, matrix: int, full
 
 
 # --------------------------------------------------------------------- dec3 JOC
+
 
 def patch_dec3_joc(path: Path, *, joc_complexity_index: int = 16) -> bool:
     """Set the `flag_ec3_extension_type_a` (JOC) bit in every EAC-3 track's `dec3` box.
@@ -231,6 +257,7 @@ def patch_dec3_joc(path: Path, *, joc_complexity_index: int = 16) -> bool:
 
 
 # --------------------------------------------------------------------- helpers
+
 
 def _iter_video_traks(top: list[Box]):
     moov = next((b for b in top if b.type == b"moov"), None)
@@ -283,14 +310,17 @@ def _path_of(_top: list[Box]) -> Path:
 
 def _with_path(path: Path):
     """Context-manager-ish helper so iterators can re-open the same file."""
+
     class _CM:
         def __enter__(self_inner):
             global _CURRENT_PATH
             _CURRENT_PATH = path
             return self_inner
+
         def __exit__(self_inner, *exc):
             global _CURRENT_PATH
             _CURRENT_PATH = None
+
     return _CM()
 
 

@@ -1,5 +1,4 @@
 """FastAPI app: REST endpoints + WebSocket for live TV.app log stream."""
-from __future__ import annotations
 
 import asyncio
 import os
@@ -87,25 +86,21 @@ async def api_pick(multi: bool = False) -> JSONResponse:
         script = (
             'set theFiles to (choose file with prompt "Pick file(s)" with multiple selections allowed)\n'
             'set out to ""\n'
-            'repeat with f in theFiles\n'
+            "repeat with f in theFiles\n"
             '  set out to out & POSIX path of f & "\\n"\n'
-            'end repeat\n'
-            'return out'
+            "end repeat\n"
+            "return out"
         )
     else:
         script = 'POSIX path of (choose file with prompt "Pick a file")'
     try:
-        result = subprocess.run(
-            ["osascript", "-e", script], capture_output=True, text=True, timeout=300
-        )
+        result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=300)
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail="osascript not available")
     if result.returncode != 0:
         # user pressed cancel → return empty list
         return JSONResponse({"paths": []})
-    paths = [
-        line.strip() for line in result.stdout.splitlines() if line.strip()
-    ]
+    paths = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     return JSONResponse({"paths": paths})
 
 
@@ -150,17 +145,23 @@ def _find_response(name: str, hint: str = "") -> JSONResponse:
     try:
         result = subprocess.run(
             ["mdfind", f"kMDItemDisplayName == '{name}'"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         paths = [p.strip() for p in result.stdout.splitlines() if p.strip()]
         paths = [p for p in paths if Path(p).suffix.lower() in exts]
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError, subprocess.TimeoutExpired:
         paths = []
 
     # 2. find(1) fallback — used when Spotlight misses (external/excluded volumes)
     if not paths:
-        search_roots = ["/Volumes", os.path.expanduser("~/Movies"),
-                        os.path.expanduser("~/Desktop"), os.path.expanduser("~/Downloads")]
+        search_roots = [
+            "/Volumes",
+            os.path.expanduser("~/Movies"),
+            os.path.expanduser("~/Desktop"),
+            os.path.expanduser("~/Downloads"),
+        ]
         if hint:
             h = os.path.expanduser(hint)
             if os.path.isdir(h):
@@ -174,7 +175,9 @@ def _find_response(name: str, hint: str = "") -> JSONResponse:
             try:
                 result = subprocess.run(
                     ["find", root, "-maxdepth", "8", "-name", name],
-                    capture_output=True, text=True, timeout=10,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
                 )
                 for p in result.stdout.splitlines():
                     p = p.strip()
@@ -280,7 +283,7 @@ async def _pump(ws: WebSocket, queue: asyncio.Queue) -> None:
         while True:
             event = await queue.get()
             await ws.send_json({"type": "event", "event": event})
-    except (WebSocketDisconnect, RuntimeError):
+    except WebSocketDisconnect, RuntimeError:
         return
 
 
@@ -293,5 +296,6 @@ def _normalize_path(p: str) -> str:
     p = p.strip()
     if p.startswith("file://"):
         from urllib.parse import unquote
+
         p = unquote(p[len("file://") :])
     return os.path.expanduser(p)

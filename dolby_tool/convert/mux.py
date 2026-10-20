@@ -12,7 +12,6 @@ reports/01_gate_model.md caveat) shows TV.app local playback spatializing
 without dec3/colr patching. Treat the patchers as last-resort knobs for
 specific bitstream-mismatch cases, not as a default pipeline step.
 """
-from __future__ import annotations
 
 import json
 import shutil
@@ -20,7 +19,6 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-
 
 # Codec families we recognise during stream selection / reporting.
 _TEXT_SUB_CODECS = {"subrip", "ass", "ssa", "mov_text", "webvtt", "text"}
@@ -53,9 +51,15 @@ class ProbeResult:
 def probe(source: Path) -> ProbeResult:
     """Run ffprobe and classify streams."""
     cmd = [
-        "ffprobe", "-v", "error",
-        "-show_streams", "-show_chapters", "-show_format",
-        "-of", "json", str(source),
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_streams",
+        "-show_chapters",
+        "-show_format",
+        "-of",
+        "json",
+        str(source),
     ]
     result = subprocess.run(cmd, check=True, capture_output=True, text=True)
     raw = json.loads(result.stdout or "{}")
@@ -97,16 +101,35 @@ def probe(source: Path) -> ProbeResult:
 # Audio codec preference for the "best" track: object/immersive first, then
 # lossless, then lossy multichannel, then stereo lossy. Higher score wins.
 _CODEC_SCORE = {
-    "ac4": 100, "eac3": 90, "ac3": 80, "truehd": 95, "dts": 70, "flac": 85,
-    "alac": 85, "mlp": 95, "opus": 60, "aac": 50, "mp3": 30, "vorbis": 30,
+    "ac4": 100,
+    "eac3": 90,
+    "ac3": 80,
+    "truehd": 95,
+    "dts": 70,
+    "flac": 85,
+    "alac": 85,
+    "mlp": 95,
+    "opus": 60,
+    "aac": 50,
+    "mp3": 30,
+    "vorbis": 30,
 }
 
 # Track-title keywords that indicate a non-primary track we should NOT pick
 # as the default (commentary, audio description, etc.).
 _NON_PRIMARY_KEYWORDS = (
-    "commentary", "comment", "director", "cast",
-    "audio description", "descriptive", "described", " ad ", "(ad)",
-    "sdh", "vi ", "visually impaired",
+    "commentary",
+    "comment",
+    "director",
+    "cast",
+    "audio description",
+    "descriptive",
+    "described",
+    " ad ",
+    "(ad)",
+    "sdh",
+    "vi ",
+    "visually impaired",
 )
 
 
@@ -123,7 +146,7 @@ def _is_non_primary(a: StreamInfo) -> bool:
 def _channels(a: StreamInfo) -> int:
     try:
         return int(a.raw.get("channels") or 0)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0
 
 
@@ -184,13 +207,18 @@ def mux(
     default_audio = _default_audio_index(info.audios)
 
     cmd: list[str] = [
-        "ffmpeg", "-hide_banner",
+        "ffmpeg",
+        "-hide_banner",
         "-y" if overwrite else "-n",
         # Tolerate partial/truncated MKVs: drop corrupt frames rather than abort.
-        "-fflags", "+discardcorrupt+genpts",
-        "-err_detect", "ignore_err",
-        "-i", str(source),
-        "-map", f"0:v:{_video_pos(info)}",
+        "-fflags",
+        "+discardcorrupt+genpts",
+        "-err_detect",
+        "ignore_err",
+        "-i",
+        str(source),
+        "-map",
+        f"0:v:{_video_pos(info)}",
     ]
 
     # All audio tracks, in source order.
@@ -224,8 +252,10 @@ def mux(
         cmd += ["-map_chapters", "0"]
 
     cmd += [
-        "-movflags", "+faststart+use_metadata_tags",
-        "-f", "mp4",
+        "-movflags",
+        "+faststart+use_metadata_tags",
+        "-f",
+        "mp4",
         str(output),
     ]
 

@@ -8,7 +8,6 @@ logic, scoped to the endpoints we actually use:
 - `view/show/{id}/episodes` — TV episode list (with skip/count paging)
 - `show/{id}/itunesSeasons` — season cover art
 """
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -29,11 +28,7 @@ _OPTIONS = "&utsk=0&caller=wta&v=58&pfm=appletv"
 
 
 def _normalize(term: str) -> str:
-    return (
-        term.replace(" (Dubbed)", "")
-        .replace(" (Subtitled)", "")
-        .replace(" (Ex-tended Edition)", "")
-    )
+    return term.replace(" (Dubbed)", "").replace(" (Subtitled)", "").replace(" (Ex-tended Edition)", "")
 
 
 def _get(url: str, timeout: float = 20.0) -> dict[str, Any] | None:
@@ -50,7 +45,7 @@ def _get(url: str, timeout: float = 20.0) -> dict[str, Any] | None:
 @dataclass
 class SearchHit:
     id: str
-    type: str          # "Movie" or "Show"
+    type: str  # "Movie" or "Show"
     title: str | None
     description: str | None
     release_date_ms: float | None
@@ -64,6 +59,7 @@ class SearchHit:
         if not self.release_date_ms:
             return None
         from datetime import UTC, datetime
+
         return datetime.fromtimestamp(self.release_date_ms / 1000, tz=UTC).year
 
     @property
@@ -71,15 +67,17 @@ class SearchHit:
         if not self.release_date_ms:
             return None
         from datetime import UTC, datetime
+
         return datetime.fromtimestamp(self.release_date_ms / 1000, tz=UTC).strftime("%Y-%m-%d")
 
 
 @dataclass
 class Metadata:
     """Resolved metadata for one title (movie or TV episode), ready to write to MP4."""
-    media_kind: str                         # "movie" | "tvShow"
+
+    media_kind: str  # "movie" | "tvShow"
     title: str | None = None
-    release_date: str | None = None         # YYYY-MM-DD
+    release_date: str | None = None  # YYYY-MM-DD
     long_description: str | None = None
     short_description: str | None = None
     cast: list[str] = field(default_factory=list)
@@ -140,6 +138,7 @@ def _to_hit(item: dict[str, Any]) -> SearchHit:
 
 
 # ----------------------------------------------------------------- Movie details
+
 
 def fetch_movie(hit: SearchHit, store: Store) -> Metadata:
     meta = Metadata(
@@ -207,6 +206,7 @@ def _enrich_with_details(meta: Metadata, content_id: str, store: Store, *, media
 
 # ----------------------------------------------------------------- TV
 
+
 def fetch_seasons(show_id: str, store: Store) -> list[tuple[int, int]]:
     """Return list of (season_number, episode_count) for a show, ordered by season."""
     url = f"{_EPISODES}{show_id}/episodes?sf={store.store_code}&locale={store.locale}{_OPTIONS}"
@@ -238,8 +238,7 @@ def fetch_seasons(show_id: str, store: Store) -> list[tuple[int, int]]:
 
 def fetch_episodes(show_id: str, store: Store, *, skip: int, count: int) -> list[dict[str, Any]]:
     url = (
-        f"{_EPISODES}{show_id}/episodes"
-        f"?skip={skip}&count={count}&sf={store.store_code}&locale={store.locale}{_OPTIONS}"
+        f"{_EPISODES}{show_id}/episodes?skip={skip}&count={count}&sf={store.store_code}&locale={store.locale}{_OPTIONS}"
     )
     payload = _get(url)
     if not payload:
@@ -288,10 +287,12 @@ def fetch_episode(show_hit: SearchHit, season: int, episode: int, store: Store) 
 
 # ----------------------------------------------------------------- helpers
 
+
 def _iso_from_ms(ms: float | None) -> str | None:
     if not ms:
         return None
     from datetime import UTC, datetime
+
     return datetime.fromtimestamp(ms / 1000, tz=UTC).strftime("%Y-%m-%d")
 
 

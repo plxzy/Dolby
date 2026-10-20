@@ -1,5 +1,4 @@
 """Compare multiple inspected specs side-by-side and pick a winner."""
-from __future__ import annotations
 
 from typing import Any
 

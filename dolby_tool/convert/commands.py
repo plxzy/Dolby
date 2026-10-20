@@ -2,7 +2,6 @@
 
 Wired from `dolby_tool/cli.py`. Kept thin: argparse + glue.
 """
-from __future__ import annotations
 
 import argparse
 import json
@@ -12,7 +11,6 @@ from pathlib import Path
 
 from . import atoms, mux, subs_pgs
 from .metadata import apple_tv, storefronts, tagger
-
 
 _TV_RE = re.compile(r"(?P<show>.+?)[. _-]*[sS](?P<s>\d{1,2})[eE](?P<e>\d{1,3})")
 _YEAR_RE = re.compile(r"(?P<title>.+?)[. _(]+(?P<year>(19|20)\d{2})")
@@ -59,12 +57,28 @@ def _clean(s: str) -> str:
 
 
 # ISO/IEC 23001-8 string → numeric code map for the values ffprobe surfaces.
-_PRIMARIES = {"bt709": 1, "unknown": 2, "bt470bg": 5, "smpte170m": 6, "bt2020": 9,
-              "smpte428": 10, "smpte431": 11, "smpte432": 12}
-_TRANSFER = {"bt709": 1, "unknown": 2, "bt470bg": 5, "smpte170m": 6, "bt2020-10": 14,
-             "bt2020-12": 15, "smpte2084": 16, "arib-std-b67": 18, "iec61966-2-1": 13}
-_MATRIX = {"bt709": 1, "unknown": 2, "fcc": 4, "bt470bg": 5, "smpte170m": 6,
-           "bt2020nc": 9, "bt2020c": 10}
+_PRIMARIES = {
+    "bt709": 1,
+    "unknown": 2,
+    "bt470bg": 5,
+    "smpte170m": 6,
+    "bt2020": 9,
+    "smpte428": 10,
+    "smpte431": 11,
+    "smpte432": 12,
+}
+_TRANSFER = {
+    "bt709": 1,
+    "unknown": 2,
+    "bt470bg": 5,
+    "smpte170m": 6,
+    "bt2020-10": 14,
+    "bt2020-12": 15,
+    "smpte2084": 16,
+    "arib-std-b67": 18,
+    "iec61966-2-1": 13,
+}
+_MATRIX = {"bt709": 1, "unknown": 2, "fcc": 4, "bt470bg": 5, "smpte170m": 6, "bt2020nc": 9, "bt2020c": 10}
 
 
 def _resolve_colr_args(args, src: Path) -> tuple[int, int, int, bool] | None:
@@ -76,8 +90,10 @@ def _resolve_colr_args(args, src: Path) -> tuple[int, int, int, bool] | None:
     explicit = (args.colr_primaries, args.colr_transfer, args.colr_matrix)
     if any(v is not None for v in explicit):
         if any(v is None for v in explicit):
-            print("--colr-primaries/--colr-transfer/--colr-matrix must be passed together; "
-                  "skipping colr patch.", file=sys.stderr)
+            print(
+                "--colr-primaries/--colr-transfer/--colr-matrix must be passed together; skipping colr patch.",
+                file=sys.stderr,
+            )
             return None
         return (args.colr_primaries, args.colr_transfer, args.colr_matrix, args.colr_full_range)
     if not args.colr_from_source:
@@ -88,10 +104,13 @@ def _resolve_colr_args(args, src: Path) -> tuple[int, int, int, bool] | None:
     t = _TRANSFER.get((v.get("color_transfer") or "").lower())
     m = _MATRIX.get((v.get("color_space") or "").lower())
     if not (p and t and m):
-        print(f"--colr-from-source: ffprobe returned ambiguous color tags "
-              f"(primaries={v.get('color_primaries')!r}, transfer={v.get('color_transfer')!r}, "
-              f"matrix={v.get('color_space')!r}). Skipping colr patch — pass explicit "
-              "--colr-primaries/--colr-transfer/--colr-matrix instead.", file=sys.stderr)
+        print(
+            f"--colr-from-source: ffprobe returned ambiguous color tags "
+            f"(primaries={v.get('color_primaries')!r}, transfer={v.get('color_transfer')!r}, "
+            f"matrix={v.get('color_space')!r}). Skipping colr patch — pass explicit "
+            "--colr-primaries/--colr-transfer/--colr-matrix instead.",
+            file=sys.stderr,
+        )
         return None
     fr = (v.get("color_range") or "").lower() == "pc" or args.colr_full_range
     return (p, t, m, fr)
@@ -140,9 +159,15 @@ def resolve_metadata(
     if content_id:
         # Direct fetch path
         fake_hit = apple_tv.SearchHit(
-            id=content_id, type=("Show" if kind == "tvShow" else "Movie"),
-            title=None, description=None, release_date_ms=None,
-            images={}, roles_summary=None, rating_display=None, raw={},
+            id=content_id,
+            type=("Show" if kind == "tvShow" else "Movie"),
+            title=None,
+            description=None,
+            release_date_ms=None,
+            images={},
+            roles_summary=None,
+            rating_display=None,
+            raw={},
         )
         if kind == "tvShow":
             if season is None or episode is None:
@@ -165,10 +190,7 @@ def resolve_metadata(
         return None
 
     if interactive:
-        labels = [
-            f"{(h.title or '?')} ({h.year or '?'}) — id={h.id}"
-            for h in hits[:8]
-        ]
+        labels = [f"{(h.title or '?')} ({h.year or '?'}) — id={h.id}" for h in hits[:8]]
         idx = _pick_interactive(f"Apple TV results for {title!r}:", labels)
         if idx is None:
             return None
@@ -210,28 +232,30 @@ def main_convert(argv: list[str]) -> None:
         "--colr-from-source",
         action="store_true",
         help="Patch nclx colr in-place using primaries/transfer/matrix read from "
-             "the source via ffprobe. Safe for HDR10/DV (does not change codes).",
+        "the source via ffprobe. Safe for HDR10/DV (does not change codes).",
     )
     parser.add_argument(
-        "--colr-primaries", type=int, default=None,
-        help="ISO/IEC 23001-8 colour primaries (e.g. 1=BT.709, 9=BT.2020). "
-             "Requires --colr-transfer and --colr-matrix.",
+        "--colr-primaries",
+        type=int,
+        default=None,
+        help="ISO/IEC 23001-8 colour primaries (e.g. 1=BT.709, 9=BT.2020). Requires --colr-transfer and --colr-matrix.",
     )
-    parser.add_argument("--colr-transfer", type=int, default=None,
-        help="Transfer characteristics (1=BT.709, 16=SMPTE2084/PQ, 18=HLG).")
-    parser.add_argument("--colr-matrix", type=int, default=None,
-        help="Matrix coefficients (1=BT.709, 9=BT.2020 NC).")
-    parser.add_argument("--colr-full-range", action="store_true",
-        help="Set the nclx full-range flag (default: limited range).")
+    parser.add_argument(
+        "--colr-transfer", type=int, default=None, help="Transfer characteristics (1=BT.709, 16=SMPTE2084/PQ, 18=HLG)."
+    )
+    parser.add_argument("--colr-matrix", type=int, default=None, help="Matrix coefficients (1=BT.709, 9=BT.2020 NC).")
+    parser.add_argument(
+        "--colr-full-range", action="store_true", help="Set the nclx full-range flag (default: limited range)."
+    )
     parser.add_argument(
         "--experimental-force-dec3-joc",
         action="store_true",
         help="DANGEROUS / EXPERIMENTAL. ORs the low bit of the last dec3 payload "
-             "byte for every EAC-3 track. Does NOT parse the substream/JOC layout, "
-             "and on plain E-AC-3 5.1 it lies to TV.app about Atmos capability. "
-             "Recent dtrace shows TV.app local playback spatializes without this "
-             "patch on the measured build — only use if you have an independent "
-             "Atmos/JOC verification of the source.",
+        "byte for every EAC-3 track. Does NOT parse the substream/JOC layout, "
+        "and on plain E-AC-3 5.1 it lies to TV.app about Atmos capability. "
+        "Recent dtrace shows TV.app local playback spatializes without this "
+        "patch on the measured build — only use if you have an independent "
+        "Atmos/JOC verification of the source.",
     )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
@@ -249,7 +273,9 @@ def main_convert(argv: list[str]) -> None:
             pgs_out = dst.with_suffix(".pgs.m4v")
             r = subs_pgs.convert_and_remux(src, dst, info.bitmap_subs, output=pgs_out)
             summary["pgs"] = {
-                "converted": r.converted, "skipped": r.skipped, "reason": r.reason,
+                "converted": r.converted,
+                "skipped": r.skipped,
+                "reason": r.reason,
                 "output": str(pgs_out) if r.converted else None,
             }
             if r.converted:
@@ -260,7 +286,10 @@ def main_convert(argv: list[str]) -> None:
         p, t, m, fr = colr_values
         summary["colr_patched"] = {
             "patched": atoms.patch_colr_nclx(dst, p, t, m, fr),
-            "primaries": p, "transfer": t, "matrix": m, "full_range": fr,
+            "primaries": p,
+            "transfer": t,
+            "matrix": m,
+            "full_range": fr,
         }
     if args.experimental_force_dec3_joc:
         print(
@@ -330,6 +359,6 @@ def _print_summary(summary: dict[str, object], *, as_json: bool) -> None:
     if as_json:
         print(json.dumps(summary, indent=2, sort_keys=True, default=str))
         return
-    print(f"# convert summary\n")
+    print("# convert summary\n")
     for k, v in summary.items():
         print(f"- **{k}**: `{v}`")

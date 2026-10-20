@@ -1,5 +1,4 @@
 """`dolby-tool` command line: starts the web UI (default) or runs one of the analysis subcommands."""
-from __future__ import annotations
 
 import argparse
 import ipaddress
@@ -9,6 +8,13 @@ import time
 
 import uvicorn
 
+from .capture.tvlog import (
+    LOCAL_PLAYER_PREDICATE,
+    PREDICATE,
+    LogCapture,
+    summarize_log_file,
+    tvlog_summary_markdown,
+)
 from .hls.local_hls import (
     create_hls_server,
     open_hls_url,
@@ -24,13 +30,6 @@ from .hls.movpkg import (
     movpkg_scan_markdown,
     movpkg_summary_markdown,
     scan_movpkgs,
-)
-from .capture.tvlog import (
-    LOCAL_PLAYER_PREDICATE,
-    PREDICATE,
-    LogCapture,
-    summarize_log_file,
-    tvlog_summary_markdown,
 )
 
 
@@ -61,10 +60,12 @@ def main() -> None:
         return
     if len(sys.argv) > 1 and sys.argv[1] == "convert":
         from .convert.commands import main_convert
+
         main_convert(sys.argv[2:])
         return
     if len(sys.argv) > 1 and sys.argv[1] == "tag":
         from .convert.commands import main_tag
+
         main_tag(sys.argv[2:])
         return
 
@@ -81,8 +82,7 @@ def main() -> None:
 
     if not is_loopback:
         print(
-            f"⚠️  Warning: binding to non-loopback host {args.host}. "
-            "This tool can inspect arbitrary local file paths."
+            f"⚠️  Warning: binding to non-loopback host {args.host}. This tool can inspect arbitrary local file paths."
         )
 
     uvicorn.run(

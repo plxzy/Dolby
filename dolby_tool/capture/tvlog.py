@@ -13,7 +13,6 @@ The predicate targets the four processes that emit useful playback telemetry on 
 mediaplaybackd, VTDecoderXPCService, coremediaxpc, audiomxd — covering both HLS
 streaming (Apple TV+) and FigFilePlayer (local library) paths.
 """
-from __future__ import annotations
 
 import asyncio
 import re
@@ -34,10 +33,7 @@ PREDICATE = (
 )
 
 LOCAL_PLAYER_PREDICATE = (
-    PREDICATE
-    + ' OR process == "QuickTime Player"'
-    + ' OR process == "Safari"'
-    + ' OR process CONTAINS "WebKit"'
+    PREDICATE + ' OR process == "QuickTime Player"' + ' OR process == "Safari"' + ' OR process CONTAINS "WebKit"'
 )
 
 
@@ -48,9 +44,7 @@ LOCAL_PLAYER_PREDICATE = (
 # FigAlternate(504) [Peak/Avg 30570719/24765202] [3840x1606] [dvh1.05.06,ec-3]
 # <FigAlternate(504):[0x...] [Peak/Avg 30570719/24765202] [3840x1606] [AudioGroup ...] [dvh1.05.06,ec-3]
 # [VideoRange PQ] [HDCP Type1] [FrameRate 23.976]
-RE_FIG_ALT = re.compile(
-    r"FigAlternate\(\s*(?P<id>\d+)\s*\)"
-)
+RE_FIG_ALT = re.compile(r"FigAlternate\(\s*(?P<id>\d+)\s*\)")
 RE_FIG_ALT_PEAK = re.compile(r"\[Peak/Avg\s+(?P<peak>\d+)/(?P<avg>\d+)\]")
 RE_FIG_ALT_RES = re.compile(r"\[(?P<width>\d+)x(?P<height>\d+)\]")
 RE_FIG_ALT_CODECS = re.compile(r"\[(?P<codecs>(?:avc1|hvc1|dvh1|dvhe|ac-3|ec-3|mp4a)[^\]]*)\]")
@@ -171,15 +165,9 @@ RE_ROUTE = re.compile(r"Route = (?P<route>.+)", re.IGNORECASE)
 # SpatialMgr per-binding capability lines (one field per log line within the
 # binding block). Useful as a per-app verdict on whether the route is
 # spatial-capable at all and which source identifier got registered.
-RE_MAX_SPAT_CHANNELS = re.compile(
-    r"maxSpatializableChannels\s*=\s*(?P<channels>\d+)", re.IGNORECASE
-)
-RE_SPATIAL_AUDIO_SOURCES = re.compile(
-    r"spatialAudioSources\s*=\s*\[\s*(?P<sources>[^\]]*?)\s*\]", re.IGNORECASE
-)
-RE_SPATIAL_BINDING_APP = re.compile(
-    r"^\s*App\s*=\s*(?P<app>[^\s{}][^\n]*?)\s*$", re.IGNORECASE | re.MULTILINE
-)
+RE_MAX_SPAT_CHANNELS = re.compile(r"maxSpatializableChannels\s*=\s*(?P<channels>\d+)", re.IGNORECASE)
+RE_SPATIAL_AUDIO_SOURCES = re.compile(r"spatialAudioSources\s*=\s*\[\s*(?P<sources>[^\]]*?)\s*\]", re.IGNORECASE)
+RE_SPATIAL_BINDING_APP = re.compile(r"^\s*App\s*=\s*(?P<app>[^\s{}][^\n]*?)\s*$", re.IGNORECASE | re.MULTILINE)
 RE_ATMOS_DECODER_STATE = re.compile(
     r"ACDDPAtmosDecoder\.cpp:\d+.*?"
     r"mIsAtmos = (?P<is_atmos>[01]),\s*"
@@ -499,14 +487,14 @@ def _parse_renderer_line(line: str) -> dict[str, Any] | None:
 def _int(v: Any) -> int | None:
     try:
         return int(v) if v is not None else None
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
 def _float(v: Any) -> float | None:
     try:
         return float(v) if v is not None else None
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -750,9 +738,7 @@ class LogCapture:
         elif kind == "renderer_hint":
             if event.get("hint") == "spatial_rendering_changed":
                 self._spatial_rendering_changed_count += 1
-            key = tuple(
-                sorted((k, repr(v)) for k, v in event.items() if k not in {"raw", "ts"})
-            )
+            key = tuple(sorted((k, repr(v)) for k, v in event.items() if k not in {"raw", "ts"}))
             if key not in self._renderer_event_keys:
                 self._renderer_event_keys.add(key)
                 if len(self._renderer_events) < SUMMARY_RENDERER_EVENT_LIMIT:
@@ -764,7 +750,7 @@ class LogCapture:
             if loop and loop.is_running():
                 try:
                     loop.call_soon_threadsafe(q.put_nowait, event)
-                except (RuntimeError, asyncio.QueueFull):
+                except RuntimeError, asyncio.QueueFull:
                     pass
 
     # -- summary -----------------------------------------------------------
@@ -845,22 +831,16 @@ class LogCapture:
             )
             playback["hls_delivery"] = _hls_delivery_label(last_variant.get("audio_group"))
             playback["peak_mbps"] = (
-                round(last_variant["peak_bps"] / 1_000_000, 2)
-                if last_variant.get("peak_bps")
-                else None
+                round(last_variant["peak_bps"] / 1_000_000, 2) if last_variant.get("peak_bps") else None
             )
             playback["avg_mbps"] = (
-                round(last_variant["avg_bps"] / 1_000_000, 2)
-                if last_variant.get("avg_bps")
-                else None
+                round(last_variant["avg_bps"] / 1_000_000, 2) if last_variant.get("avg_bps") else None
             )
         if last_codec:
             playback["decoded_fourcc"] = last_codec.get("fourcc")
             playback["decoder"] = last_codec.get("decoder")
             if last_codec.get("width"):
-                playback["decoded_resolution"] = (
-                    f"{last_codec['width']}x{last_codec['height']}"
-                )
+                playback["decoded_resolution"] = f"{last_codec['width']}x{last_codec['height']}"
         if last_audio:
             playback["audio"] = _audio_summary(last_audio)
         if best_audio:
@@ -884,13 +864,9 @@ class LogCapture:
             playback["pipeline_engines_observed"] = pipeline_engines
 
         if renderer_events:
-            playback["renderer_evidence"] = _renderer_summary(
-                renderer_events, started_at=self._started_at
-            )
+            playback["renderer_evidence"] = _renderer_summary(renderer_events, started_at=self._started_at)
             if self.event_count and self._spatial_rendering_changed_count:
-                playback["renderer_evidence"]["spatial_rendering_changed_count"] = (
-                    self._spatial_rendering_changed_count
-                )
+                playback["renderer_evidence"]["spatial_rendering_changed_count"] = self._spatial_rendering_changed_count
         playback["capture_quality"] = _capture_quality(
             codec_events=codec_events,
             audio_events=audio_events,
@@ -985,24 +961,15 @@ def tvlog_summary_markdown(summary: dict[str, Any]) -> str:
     if renderer:
         lines.append(f"- renderer verdict: `{renderer.get('verdict')}`")
         if renderer.get("app_spatial_rendering_ever_true") is not None:
-            lines.append(
-                "- TV.app app spatial ever true: "
-                f"`{renderer.get('app_spatial_rendering_ever_true')}`"
-            )
+            lines.append(f"- TV.app app spatial ever true: `{renderer.get('app_spatial_rendering_ever_true')}`")
         if renderer.get("lower_level_spatialization_active") is not None:
-            lines.append(
-                "- lower-level spatialization active: "
-                f"`{renderer.get('lower_level_spatialization_active')}`"
-            )
+            lines.append(f"- lower-level spatialization active: `{renderer.get('lower_level_spatialization_active')}`")
         if renderer.get("atmos_decoder_active") is not None:
             lines.append(f"- Atmos decoder active: `{renderer.get('atmos_decoder_active')}`")
         if renderer.get("oar_mode_active") is not None:
             lines.append(f"- OAR mode active: `{renderer.get('oar_mode_active')}`")
         if renderer.get("audioqueue_forced_atmos_714") is not None:
-            lines.append(
-                "- AudioQueue forced 7.1.4 Atmos: "
-                f"`{renderer.get('audioqueue_forced_atmos_714')}`"
-            )
+            lines.append(f"- AudioQueue forced 7.1.4 Atmos: `{renderer.get('audioqueue_forced_atmos_714')}`")
         if renderer.get("auspatial_channel_layouts"):
             layouts = ", ".join(f"`{layout}`" for layout in renderer["auspatial_channel_layouts"])
             lines.append(f"- AUSpatialMixer layouts: {layouts}")
@@ -1063,8 +1030,7 @@ def _movpkg_hls_verdict(
         return None
 
     atmos_seen = any(
-        (audio.get("format") or "").lower() in {"ec+3", "ec-3", "ec3", "qc+3"}
-        and (audio.get("channels") or 0) >= 16
+        (audio.get("format") or "").lower() in {"ec+3", "ec-3", "ec3", "qc+3"} and (audio.get("channels") or 0) >= 16
         for audio in observed_audio
     )
     atmos_seen = atmos_seen or any(
@@ -1135,9 +1101,7 @@ def _renderer_summary(
         ]
 
     head_tracking = [
-        e.get("prefers_head_tracked_spatialization")
-        for e in events
-        if e["hint"] == "head_tracking_preference"
+        e.get("prefers_head_tracked_spatialization") for e in events if e["hint"] == "head_tracking_preference"
     ]
     if head_tracking:
         summary["prefers_head_tracked_spatialization"] = _unique_keep_order(head_tracking)
@@ -1155,23 +1119,15 @@ def _renderer_summary(
         ]
 
     decoder_subtypes = [
-        e.get("decoder_subtype")
-        for e in events
-        if e["hint"] == "atmos_decoder_subtype" and e.get("decoder_subtype")
+        e.get("decoder_subtype") for e in events if e["hint"] == "atmos_decoder_subtype" and e.get("decoder_subtype")
     ]
     if decoder_subtypes:
         summary["decoder_subtypes"] = _unique_keep_order(decoder_subtypes)
 
     mixer_events = [e for e in events if e["hint"] == "mixer_spatial_status"]
     if mixer_events:
-        statuses = [
-            e.get("spatialization_status")
-            for e in mixer_events
-            if e.get("spatialization_status") is not None
-        ]
-        summary["mixer_content_spatializable"] = any(
-            e.get("content_spatializable") is True for e in mixer_events
-        )
+        statuses = [e.get("spatialization_status") for e in mixer_events if e.get("spatialization_status") is not None]
+        summary["mixer_content_spatializable"] = any(e.get("content_spatializable") is True for e in mixer_events)
         summary["mixer_spatialization_statuses"] = _unique_keep_order(statuses)
         summary["mixer_spatial_status"] = [
             {
@@ -1189,9 +1145,7 @@ def _renderer_summary(
     if any(e["hint"].startswith("auspatial_") for e in events):
         summary["auspatial_mixer_active"] = True
     layouts = [
-        e.get("channel_layout")
-        for e in events
-        if e["hint"] == "auspatial_channel_layout" and e.get("channel_layout")
+        e.get("channel_layout") for e in events if e["hint"] == "auspatial_channel_layout" and e.get("channel_layout")
     ]
     if layouts:
         summary["auspatial_channel_layouts"] = _unique_keep_order(layouts)
@@ -1241,9 +1195,7 @@ def _renderer_summary(
         summary["spatial_source_unknown"] = "?src" in all_sources
     app_events = [e for e in events if e["hint"] == "spatial_binding_app"]
     if app_events:
-        apps = _unique_keep_order(
-            [e.get("spatial_binding_app") for e in app_events if e.get("spatial_binding_app")]
-        )
+        apps = _unique_keep_order([e.get("spatial_binding_app") for e in app_events if e.get("spatial_binding_app")])
         summary["spatial_binding_apps"] = apps
 
     # Immersive rendering requested ([item requires immersive rendering yes|no])
@@ -1253,9 +1205,7 @@ def _renderer_summary(
             e.get("immersive_rendering_requested") is True for e in immersive_events
         )
 
-    summary["spatial_rendering_changed_count"] = sum(
-        1 for e in events if e["hint"] == "spatial_rendering_changed"
-    )
+    summary["spatial_rendering_changed_count"] = sum(1 for e in events if e["hint"] == "spatial_rendering_changed")
     summary["lower_level_spatialization_active"] = any(
         summary.get(key) is True
         for key in (
@@ -1275,10 +1225,7 @@ def _renderer_summary(
         and summary.get("app_spatial_rendering_last_state") is False
     ):
         summary["verdict"] = "app_spatial_rendering_was_active"
-    elif (
-        summary.get("app_spatial_rendering_last_state") is False
-        and summary["lower_level_spatialization_active"]
-    ):
+    elif summary.get("app_spatial_rendering_last_state") is False and summary["lower_level_spatialization_active"]:
         summary["verdict"] = "lower_level_active_app_spatial_false"
         summary["verdict_note"] = (
             "Atmos decode and spatial mixer are active (lower-level CoreAudio machinery "

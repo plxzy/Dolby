@@ -20,9 +20,7 @@ def _write_stream(
 ) -> None:
     stream_dir = root / rel
     stream_dir.mkdir(parents=True, exist_ok=True)
-    network_url = (
-        f"https://download-ap-aoc.tv.apple.com/audio_en_gr{group}_x.m3u8?g={group}" if xml_group else ""
-    )
+    network_url = f"https://download-ap-aoc.tv.apple.com/audio_en_gr{group}_x.m3u8?g={group}" if xml_group else ""
     (stream_dir / "StreamInfoBoot.xml").write_text(
         "\n".join(
             [

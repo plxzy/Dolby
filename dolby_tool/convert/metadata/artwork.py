@@ -4,7 +4,6 @@ Apple TV image URLs are templates like
 `https://is1-ssl.mzstatic.com/.../source/{w}x{h}.{f}` — we substitute the requested
 size and format. We always fetch JPEG.
 """
-from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal

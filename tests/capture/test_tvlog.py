@@ -3,8 +3,8 @@ from dolby_tool.capture.tvlog import LogCapture, _parse_line, summarize_log_line
 
 def test_parse_line_figalternate():
     line = (
-        'FigAlternate(504) [Peak/Avg 30570719/24765202] [3840x1606] '
-        '[dvh1.05.06,ec-3] [VideoRange PQ] [HDCP Type1] [FrameRate 23.976]'
+        "FigAlternate(504) [Peak/Avg 30570719/24765202] [3840x1606] "
+        "[dvh1.05.06,ec-3] [VideoRange PQ] [HDCP Type1] [FrameRate 23.976]"
     )
     out = _parse_line(line)
     assert out is not None
@@ -69,7 +69,7 @@ def test_movpkg_selected_stereo_with_atmos_evidence_gets_verdict():
 
 
 def test_parse_line_codec_type():
-    out = _parse_line('CodecType: dvh1 (HW decoder), DecodedPixelBuffer: &xv0, 3840 x 1600')
+    out = _parse_line("CodecType: dvh1 (HW decoder), DecodedPixelBuffer: &xv0, 3840 x 1600")
     assert out is not None
     assert out["kind"] == "codec_type"
     assert out["fourcc"] == "dvh1"
@@ -213,8 +213,7 @@ def test_audio_format_keeps_spatialization_fields_without_inventing_atmos():
             "[Spatialization Eligible yes] [Spatialization yes]"
         ),
         _parse_line(
-            "[AudioFormat qc+3] [AudioChannels 16] [SampleRate 48000] "
-            "[Spatialization Eligible yes] [Spatialization no]"
+            "[AudioFormat qc+3] [AudioChannels 16] [SampleRate 48000] [Spatialization Eligible yes] [Spatialization no]"
         ),
     ]
     assert all(event is not None for event in events)
@@ -349,13 +348,9 @@ def test_renderer_hints_parse_local_spatial_lines():
             "rendering_spatial_audio": False,
         }
     ]
-    assert renderer["spatial_power"] == [
-        {"spatialization": True, "stereo_upmix": False, "head_tracking": False}
-    ]
+    assert renderer["spatial_power"] == [{"spatialization": True, "stereo_upmix": False, "head_tracking": False}]
     assert renderer["prefers_head_tracked_spatialization"] == [False]
-    assert renderer["atmos_decoder_states"] == [
-        {"decoder_is_atmos": True, "decoder_oar_mode": True}
-    ]
+    assert renderer["atmos_decoder_states"] == [{"decoder_is_atmos": True, "decoder_oar_mode": True}]
     assert renderer["decoder_subtypes"] == ["ec+3"]
     assert renderer["mixer_spatial_status"] == [
         {
@@ -448,10 +443,7 @@ def test_tvlog_summary_markdown_renders_local_player_controls():
             "2026-05-23 05:22:30.745 Db QuickTime Player[9643:224f2] "
             "AudioQueueNew: ->AudioQueueNewOutput 16 ch, 48000 Hz, ec+3"
         ),
-        (
-            "2026-05-23 05:22:30.783 Df QuickTime Player[9643:224f2] "
-            "Forcing 7.1.4 decoder for Atmos"
-        ),
+        ("2026-05-23 05:22:30.783 Df QuickTime Player[9643:224f2] Forcing 7.1.4 decoder for Atmos"),
         (
             "2026-05-23 05:22:31.204 Df QuickTime Player[9643:23337] "
             "[com.apple.coreaudio:AUSpatialMixerV2] "

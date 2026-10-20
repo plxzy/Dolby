@@ -13,7 +13,6 @@ Atom reference:
   stik = media kind     hdvd = HD video             covr = cover art (jpg)
   iTunEXTC = content rating string (e.g. "mpaa|PG-13|300|")
 """
-from __future__ import annotations
 
 import shutil
 import subprocess
@@ -81,8 +80,10 @@ def apply(path: Path, meta: Metadata) -> dict[str, object]:
     if meta.rating:
         # iTunEXTC content-rating string lives in a reverse-DNS atom.
         args += [
-            "--rDNSatom", meta.rating.itunes_extc(),
-            "name=iTunEXTC", "domain=com.apple.iTunes",
+            "--rDNSatom",
+            meta.rating.itunes_extc(),
+            "name=iTunEXTC",
+            "domain=com.apple.iTunes",
         ]
         fields_set.append("iTunEXTC")
 
@@ -111,6 +112,6 @@ def apply(path: Path, meta: Metadata) -> dict[str, object]:
     return {
         "applied": True,
         "fields": sorted(set(fields_set)),
-        "artwork_count": len(artwork_paths) if 'artwork_paths' in dir() else 0,
+        "artwork_count": len(artwork_paths) if "artwork_paths" in dir() else 0,
         "rating": meta.rating.itunes_extc() if meta.rating else None,
     }

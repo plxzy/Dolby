@@ -183,7 +183,7 @@ def test_package_hls_from_file_invokes_ffmpeg_for_split_audio_group(tmp_path, mo
         "video_range": "PQ",
     }
     assert (output / "master.m3u8").read_text(encoding="utf-8") == (
-        '#EXTM3U\n'
+        "#EXTM3U\n"
         '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="group_audio",URI="stream_English.m3u8",'
         'LANGUAGE="en",NAME="English",AUTOSELECT=YES,CHANNELS="6/JOC"\n'
         '#EXT-X-STREAM-INF:BANDWIDTH=1,AUDIO="group_audio",'
@@ -230,9 +230,7 @@ def _write_stream_info(
     for index, data in enumerate(fragments):
         path = f"{index}.frag"
         (stream_dir / path).write_bytes(data)
-        segment_xml.append(
-            f'<SEG Dur="1.0" Len="{len(data)}" Off="{offset}" PATH="{path}" SeqNum="{index}" />'
-        )
+        segment_xml.append(f'<SEG Dur="1.0" Len="{len(data)}" Off="{offset}" PATH="{path}" SeqNum="{index}" />')
         playlist_lines.extend(
             [
                 "#EXTINF:1.0,",
@@ -251,7 +249,7 @@ def _write_stream_info(
     <ISEG Len="{len(init)}" Off="0" PATH="init.initfrag" SeqNum="0" />
   </MediaInitializationSegments>
   <MediaSegments>
-    {''.join(segment_xml)}
+    {"".join(segment_xml)}
   </MediaSegments>
   <MediaBytesStored>{offset}</MediaBytesStored>
 </StreamInfo>

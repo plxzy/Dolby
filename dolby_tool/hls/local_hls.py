@@ -1,5 +1,4 @@
 """Range-capable localhost serving for prepared HLS folders."""
-from __future__ import annotations
 
 import contextlib
 import json
@@ -256,8 +255,7 @@ def package_hls_from_file(
     stream_probe = _probe_package_streams(source, audio_stream=audio_stream)
 
     var_stream_map = (
-        "v:0,agroup:audio,name:video "
-        "a:0,agroup:audio,language:eng,name:English,default:yes"
+        "v:0,agroup:audio,name:video a:0,agroup:audio,language:eng,name:English,default:yes"
         if split_audio_group
         else "v:0,a:0,name:main"
     )
@@ -326,11 +324,7 @@ def package_hls_summary_markdown(summary: dict[str, object]) -> str:
     for playlist in summary.get("playlists", []):
         row = playlist if isinstance(playlist, dict) else {}
         lines.append(
-            "| "
-            f"`{row.get('playlist')}` | "
-            f"{row.get('segments')} | "
-            f"{row.get('init_maps')} | "
-            f"{row.get('bytes')} |"
+            f"| `{row.get('playlist')}` | {row.get('segments')} | {row.get('init_maps')} | {row.get('bytes')} |"
         )
     return "\n".join(lines) + "\n"
 

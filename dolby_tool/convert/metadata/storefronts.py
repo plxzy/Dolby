@@ -1,5 +1,4 @@
 """Storefront / locale lookups, ported from Subler's Storefronts.json + iTunes store mapping."""
-from __future__ import annotations
 
 import json
 from dataclasses import dataclass

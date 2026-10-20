@@ -8,7 +8,6 @@ We run two ffprobe passes:
 
 If `mediainfo` is on PATH we also run it for richer Atmos detection (E-AC-3 JOC).
 """
-from __future__ import annotations
 
 import json
 import os
@@ -30,9 +29,7 @@ class InspectError(Exception):
 
 def _run(cmd: list[str], timeout: int = 30) -> str:
     try:
-        out = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=False
-        )
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except FileNotFoundError as e:
         raise InspectError(f"command not found: {cmd[0]}") from e
     if out.returncode != 0:
@@ -84,7 +81,7 @@ def _mediainfo_json(path: str) -> dict[str, Any] | None:
     try:
         raw = _run([MEDIAINFO, "--Output=JSON", path])
         return json.loads(raw)
-    except (InspectError, json.JSONDecodeError):
+    except InspectError, json.JSONDecodeError:
         return None
 
 
@@ -165,7 +162,7 @@ def inspect_file(path: str) -> dict[str, Any]:
     try:
         first = _ffprobe_first_frame(path, 0)
         frame_side = (first.get("frames") or [{}])[0].get("side_data_list") or []
-    except (InspectError, IndexError):
+    except InspectError, IndexError:
         frame_side = []
 
     stream_side = vstream.get("side_data_list") or []
@@ -183,9 +180,7 @@ def inspect_file(path: str) -> dict[str, Any]:
                 "present": True,
                 "profile_raw": profile,
                 "compatibility_id": compat,
-                "compatibility_name": _DV_COMPAT_NAMES.get(
-                    compat or 0, f"id={compat}"
-                ),
+                "compatibility_name": _DV_COMPAT_NAMES.get(compat or 0, f"id={compat}"),
                 "profile": _dv_profile_label(profile, compat),
                 "level": sd.get("dv_level"),
                 "rpu_present": bool(sd.get("rpu_present_flag")),
@@ -202,16 +197,11 @@ def inspect_file(path: str) -> dict[str, Any]:
         )
 
     hdr10 = {
-        "mdcv": any(
-            "Mastering display" in (sd.get("side_data_type") or "") for sd in frame_side
-        ),
-        "cll": any(
-            "Content light level" in (sd.get("side_data_type") or "") for sd in frame_side
-        ),
+        "mdcv": any("Mastering display" in (sd.get("side_data_type") or "") for sd in frame_side),
+        "cll": any("Content light level" in (sd.get("side_data_type") or "") for sd in frame_side),
     }
     hdr10_plus = any(
-        "SMPTE 2094-40" in (sd.get("side_data_type") or "")
-        or "HDR10+" in (sd.get("side_data_type") or "")
+        "SMPTE 2094-40" in (sd.get("side_data_type") or "") or "HDR10+" in (sd.get("side_data_type") or "")
         for sd in frame_side
     )
 
@@ -246,11 +236,7 @@ def inspect_file(path: str) -> dict[str, Any]:
     mi = _mediainfo_json(path)
     mi_audio_tracks = []
     if mi:
-        mi_audio_tracks = [
-            t
-            for t in (mi.get("media", {}).get("track") or [])
-            if t.get("@type") == "Audio"
-        ]
+        mi_audio_tracks = [t for t in (mi.get("media", {}).get("track") or []) if t.get("@type") == "Audio"]
 
     audio_out = []
     for i, a in enumerate(audio_streams):
@@ -320,14 +306,14 @@ def inspect_file(path: str) -> dict[str, Any]:
 def _to_int(v: Any) -> int | None:
     try:
         return int(v) if v is not None else None
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
 def _to_float(v: Any) -> float | None:
     try:
         return float(v) if v is not None else None
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
