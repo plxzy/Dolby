@@ -156,3 +156,94 @@ def test_package_hls_from_file_reports_ffmpeg_failures_readably(tmp_path, source
         package_hls_from_file(source, tmp_path / "out")
 
     assert excinfo.value.returncode == 1
+
+
+def _write_files(directory: Path, *names: str) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        (directory / name).write_bytes(b"old")
+
+
+def test_overwrite_refuses_a_folder_holding_unrelated_files(tmp_path, source, fake_tools):
+    output = tmp_path / "Movies"
+    _write_files(output, "master.m3u8", "stream_video_0000.m4s", "holiday.mov")
+    (output / "Photos").mkdir()
+
+    with pytest.raises(ValueError, match=r"does not create: Photos, holiday\.mov"):
+        package_hls_from_file(source, output, overwrite=True)
+
+    assert sorted(path.name for path in output.iterdir()) == [
+        "Photos",
+        "holiday.mov",
+        "master.m3u8",
+        "stream_video_0000.m4s",
+    ]
+    assert all(cmd[0] != "ffmpeg" for cmd in fake_tools.calls)
+
+
+def test_overwrite_refuses_an_output_folder_containing_the_source(tmp_path, fake_tools):
+    output = tmp_path / "out"
+    _write_files(output, "input.mp4", "master.m3u8")
+
+    with pytest.raises(ValueError, match="inside the output directory"):
+        package_hls_from_file(output / "input.mp4", output, overwrite=True)
+
+    assert (output / "input.mp4").read_bytes() == b"old"
+    assert (output / "master.m3u8").exists()
+
+
+def test_overwrite_keeps_earlier_output_when_probing_fails(tmp_path, source, fake_tools):
+    output = tmp_path / "out"
+    _write_files(output, "master.m3u8", "stream_video.m3u8", "init_0.mp4")
+    fake_tools.streams = [STEREO_AAC]
+
+    with pytest.raises(ValueError, match="No video stream"):
+        package_hls_from_file(source, output, overwrite=True)
+
+    assert sorted(path.name for path in output.iterdir()) == ["init_0.mp4", "master.m3u8", "stream_video.m3u8"]
+
+
+def test_overwrite_replaces_only_generated_files(tmp_path, source, fake_tools):
+    output = tmp_path / "out"
+    # A previous `--combined` run, plus the metadata file Finder leaves behind.
+    _write_files(output, "master.m3u8", "stream_main.m3u8", "stream_main_0000.m4s", "init.mp4", ".DS_Store")
+
+    package_hls_from_file(source, output, overwrite=True)
+
+    assert sorted(path.name for path in output.iterdir()) == [
+        ".DS_Store",
+        "init_0.mp4",
+        "init_1.mp4",
+        "master.m3u8",
+        "stream_English.m3u8",
+        "stream_English_0000.m4s",
+        "stream_video.m3u8",
+        "stream_video_0000.m4s",
+    ]
+    assert (output / ".DS_Store").read_bytes() == b"old"
+
+
+@pytest.mark.requires_ffmpeg
+def test_package_round_trip_with_real_ffmpeg(tmp_path, media_clip):
+    clip = media_clip("hls_h264_aac.mp4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac")
+    output = tmp_path / "hls"
+
+    split = package_hls_from_file(clip, output, segment_time=1)
+    with pytest.raises(ValueError, match="Output directory is not empty"):
+        package_hls_from_file(clip, output)
+    combined = package_hls_from_file(clip, output, overwrite=True, segment_time=1, split_audio_group=False)
+
+    assert [row["playlist"] for row in split["playlists"]] == [
+        "master.m3u8",
+        "stream_English.m3u8",
+        "stream_video.m3u8",
+    ]
+    assert [row["playlist"] for row in combined["playlists"]] == ["master.m3u8", "stream_main.m3u8"]
+    # Nothing from the split run survives the combined one.
+    segments = combined["playlists"][1]["segments"]
+    assert {path.name for path in output.iterdir()} == {
+        "init.mp4",
+        "master.m3u8",
+        "stream_main.m3u8",
+        *(f"stream_main_{index:04d}.m4s" for index in range(segments)),
+    }

@@ -1,6 +1,6 @@
 """Stream-copy a local media file into fMP4 HLS that QuickTime and Safari can play from `hls-serve`."""
 
-import shutil
+import fnmatch
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Self
@@ -10,6 +10,23 @@ from .playlist import MASTER_PLAYLIST, playlist_references, set_attribute
 
 # HEVC Dolby Vision sample entries; the HLS CODECS attribute needs a profile/level suffix for them.
 _DV_HEVC_TAGS = frozenset({"dvh1", "dvhe"})
+
+# Output names handed to ffmpeg: `%v` is the variant name, `%04d` the segment number. With several
+# variants ffmpeg suffixes the init segment with the variant index (init_0.mp4, init_1.mp4, ...).
+_VARIANT_PLAYLIST = "stream_%v.m3u8"
+_SEGMENT = "stream_%v_%04d.m4s"
+_INIT_SEGMENT = "init.mp4"
+
+# Every file the ffmpeg command can write. `overwrite` deletes these and nothing else.
+_GENERATED_FILES = (
+    MASTER_PLAYLIST,
+    _VARIANT_PLAYLIST.replace("%v", "*"),
+    _SEGMENT.replace("%v", "*").replace("%04d", "*"),
+    _INIT_SEGMENT,
+    _INIT_SEGMENT.replace(".mp4", "_*.mp4"),
+)
+# Finder drops this into any folder it shows; it is neither ours to delete nor a reason to refuse.
+_FINDER_METADATA = ".DS_Store"
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +60,11 @@ def package_hls_from_file(
     segment_time: float = 6.0,
     split_audio_group: bool = True,
 ) -> dict[str, object]:
-    """Stream-copy a local media file into fMP4 HLS for QuickTime/Safari controls."""
+    """Stream-copy a local media file into fMP4 HLS for QuickTime/Safari controls.
+
+    Nothing is written before the input has been probed. `overwrite` replaces the files an
+    earlier run generated in `output_dir`; it refuses rather than delete anything else.
+    """
     source = Path(input_path).expanduser().resolve()
     output = Path(output_dir).expanduser().resolve()
     if not source.is_file():
@@ -53,12 +74,11 @@ def package_hls_from_file(
     if segment_time <= 0:
         raise ValueError("segment_time must be > 0")
 
-    if output.exists() and any(output.iterdir()):
-        if not overwrite:
-            raise ValueError(f"Output directory is not empty: {output}")
-        _clear_directory(output)
-    output.mkdir(parents=True, exist_ok=True)
+    stale = _previous_outputs(source, output, overwrite=overwrite)
     tags = _probe_master_tags(source, audio_stream=audio_stream)
+    for path in stale:
+        path.unlink()
+    output.mkdir(parents=True, exist_ok=True)
 
     cmd = _ffmpeg_command(
         source,
@@ -142,6 +162,8 @@ def _ffmpeg_command(
         "vod",
         "-hls_segment_type",
         "fmp4",
+        "-hls_fmp4_init_filename",
+        _INIT_SEGMENT,
         "-hls_flags",
         "independent_segments",
         "-master_pl_name",
@@ -149,18 +171,32 @@ def _ffmpeg_command(
         "-var_stream_map",
         var_stream_map,
         "-hls_segment_filename",
-        str(output / "stream_%v_%04d.m4s"),
-        str(output / "stream_%v.m3u8"),
+        str(output / _SEGMENT),
+        str(output / _VARIANT_PLAYLIST),
     ]
 
 
-def _clear_directory(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
-    for child in path.iterdir():
-        if child.is_dir():
-            shutil.rmtree(child)
-        else:
-            child.unlink()
+def _previous_outputs(source: Path, output: Path, *, overwrite: bool) -> list[Path]:
+    """The files an earlier run left in `output`, after checking that replacing them is safe."""
+    if source.is_relative_to(output):
+        raise ValueError(f"Input file {source} is inside the output directory {output}; choose another output")
+    if not output.exists():
+        return []
+    if not output.is_dir():
+        raise ValueError(f"Output path is not a directory: {output}")
+    entries = list(output.iterdir())
+    if entries and not overwrite:
+        raise ValueError(f"Output directory is not empty: {output}")
+    entries = [entry for entry in entries if entry.name != _FINDER_METADATA]
+    if unexpected := sorted(entry.name for entry in entries if not _is_generated(entry)):
+        raise ValueError(
+            f"Refusing to overwrite {output}: it holds files HLS packaging does not create: {', '.join(unexpected)}"
+        )
+    return entries
+
+
+def _is_generated(path: Path) -> bool:
+    return path.is_file() and any(fnmatch.fnmatchcase(path.name, pattern) for pattern in _GENERATED_FILES)
 
 
 def _probe_master_tags(source: Path, *, audio_stream: int) -> MasterTags:
