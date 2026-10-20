@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..common import run_tool, which_any
-from .mux import StreamInfo
+from .mux import StreamInfo, probe, video_tag
 
 
 @dataclass
@@ -93,6 +93,9 @@ def convert_and_remux(
         # existing subtitle tracks — so the new VobSub outputs land at indices
         # offset by the count of subtitles already present.
         existing_subs = _count_subtitle_streams(target_mp4)
+        # A plain `-c copy` would fall back to `hev1` and drop the Dolby Vision
+        # config box, so re-apply the first pass's sample-entry tag.
+        tag = video_tag(probe(target_mp4).video)
 
         cmd: list[str] = ["ffmpeg", "-hide_banner", "-nostdin", "-y", "-i", str(target_mp4)]
         for idx, _sub, _lang in idx_subs:
@@ -102,7 +105,7 @@ def convert_and_remux(
             cmd += ["-map", f"{i}:s"]
             if lang:
                 cmd += [f"-metadata:s:s:{existing_subs + i - 1}", f"language={lang}"]
-        cmd += ["-c", "copy", "-movflags", "+faststart+use_metadata_tags", str(output)]
+        cmd += ["-c", "copy", *tag.ffmpeg_args, "-movflags", "+faststart+use_metadata_tags", str(output)]
         r = run_tool(cmd, check=False)
         if r.returncode != 0:
             return PgsConversionResult(

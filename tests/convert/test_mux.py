@@ -120,3 +120,38 @@ def test_default_audio_prefers_atmos_capable_codecs(codecs, best, source, ffmpeg
     assert codecs[summary["default_audio_index"]] == best
     dispositions = values(ffmpeg[0], f"-disposition:a:{summary['default_audio_index']}")
     assert dispositions == ["default"]
+
+
+# --------------------------------------------------------------------- video tag
+
+
+def hevc(dv_profile: int | None = None) -> dict[str, Any]:
+    stream: dict[str, Any] = {"index": 0, "codec_type": "video", "codec_name": "hevc"}
+    if dv_profile is not None:
+        stream["side_data_list"] = [
+            {"side_data_type": "Mastering display metadata"},
+            {"side_data_type": "DOVI configuration record", "dv_profile": dv_profile, "dv_level": 6},
+        ]
+    return stream
+
+
+@pytest.mark.parametrize(
+    ("video", "fourcc", "strict", "dolby_vision"),
+    [
+        (VIDEO, None, None, None),
+        (hevc(), "hvc1", None, None),
+        (hevc(8), "dvh1", "unofficial", "kept (profile 8, dvh1)"),
+        (hevc(5), "dvh1", "unofficial", "kept (profile 5, dvh1)"),
+        (hevc(7), "hvc1", None, "dropped (profile 7 is not supported by Apple players)"),
+    ],
+    ids=["h264", "hevc", "dv-p8", "dv-p5", "dv-p7"],
+)
+def test_video_sample_entry_tag(video, fourcc, strict, dolby_vision, source, ffmpeg, probe_streams) -> None:
+    probe_streams(video, audio(1, "eac3"))
+    summary = run_mux(source)
+
+    (cmd,) = ffmpeg
+    assert values(cmd, "-tag:v") == ([fourcc] if fourcc else [])
+    assert values(cmd, "-strict") == ([strict] if strict else [])
+    assert summary["video_tag"] == fourcc
+    assert summary["dolby_vision"] == dolby_vision

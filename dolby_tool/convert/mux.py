@@ -3,9 +3,10 @@
 Design: do as little as possible during mux. We `-c copy` video and the audio
 tracks Apple players can decode, so HEVC/H.264 + AC-3/EAC-3/AC-4 passthrough
 is bit-exact; audio Apple can't play from MP4 (TrueHD, DTS, PCM, …) is skipped
-and reported. Text subtitles are converted to `mov_text` (the only sub codec
-MP4 natively supports), and PGS bitmap subtitles are stripped here and
-re-injected by `subs_pgs.py` in a second pass.
+and reported. HEVC is labelled `hvc1` (or `dvh1` for Dolby Vision profiles
+5/8), the sample entries Apple players accept. Text subtitles are converted
+to `mov_text` (the only sub codec MP4 natively supports), and PGS bitmap
+subtitles are stripped here and re-injected by `subs_pgs.py` in a second pass.
 
 Optional `atoms.py` post-mux patches are available but NOT required for TV.app
 spatial playback on current builds — the 2026-05-23 N2-probe baseline (see
@@ -128,6 +129,50 @@ _NON_PRIMARY_KEYWORDS = (
 )
 
 
+@dataclass(frozen=True)
+class VideoTag:
+    """The sample-entry fourcc to write for the video stream, and a Dolby Vision note."""
+
+    fourcc: str | None = None  # None keeps ffmpeg's default
+    dolby_vision: str | None = None
+
+    @property
+    def ffmpeg_args(self) -> list[str]:
+        if self.fourcc is None:
+            return []
+        args = ["-tag:v", self.fourcc]
+        if self.fourcc == "dvh1":
+            # The MP4 muxer only writes the dvcC/dvvC configuration box at this strictness.
+            args += ["-strict", "unofficial"]
+        return args
+
+
+def video_tag(video: StreamInfo) -> VideoTag:
+    """Choose the sample entry Apple players need for a stream-copied video track.
+
+    ffmpeg writes HEVC as `hev1`, which Apple players reject; `hvc1` is the
+    accepted form. Dolby Vision profiles 5 and 8 become `dvh1`. Apple players
+    can't decode other profiles (7 is dual-layer), so those keep only their
+    HDR10/SDR base layer as plain `hvc1`.
+    """
+    if video.codec != "hevc":
+        return VideoTag()
+    profile = _dovi_profile(video)
+    if profile is None:
+        return VideoTag("hvc1")
+    if profile in (5, 8):
+        return VideoTag("dvh1", f"kept (profile {profile}, dvh1)")
+    return VideoTag("hvc1", f"dropped (profile {profile} is not supported by Apple players)")
+
+
+def _dovi_profile(video: StreamInfo) -> int | None:
+    """Dolby Vision profile from the stream-level DOVI configuration record, if any."""
+    for side_data in video.raw.get("side_data_list") or []:
+        if side_data.get("side_data_type") == "DOVI configuration record":
+            return to_int(side_data.get("dv_profile"))
+    return None
+
+
 def _is_non_primary(a: StreamInfo) -> bool:
     title = (a.title or "").lower()
     if any(kw in f" {title} " for kw in _NON_PRIMARY_KEYWORDS):
@@ -195,6 +240,7 @@ def mux(
         skipped = ", ".join(f"#{s.index} {s.codec}" for s in info.skipped_audio)
         raise ValueError(f"No audio track Apple players can play from MP4 in {source.name} (skipped: {skipped})")
     default_audio = _default_audio_index(info.audios)
+    tag = video_tag(info.video)
 
     cmd: list[str] = [
         "ffmpeg",
@@ -229,7 +275,7 @@ def mux(
             cmd += ["-map", f"0:{s.index}?"]
             sub_codecs.append("copy")
 
-    cmd += ["-c:v", "copy", "-c:a", "copy"]
+    cmd += ["-c:v", "copy", *tag.ffmpeg_args, "-c:a", "copy"]
     for i, codec in enumerate(sub_codecs):
         cmd += [f"-c:s:{i}", codec]
 
@@ -257,6 +303,8 @@ def mux(
         "source": str(source),
         "output": str(output),
         "video_codec": info.video.codec,
+        "video_tag": tag.fourcc,
+        "dolby_vision": tag.dolby_vision,
         "audio_streams": [{"codec": a.codec, "language": a.language} for a in info.audios],
         "default_audio_index": default_audio,
         "audio_skipped": [asdict(s) for s in info.skipped_audio],
