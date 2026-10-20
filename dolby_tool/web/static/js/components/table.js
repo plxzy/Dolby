@@ -4,12 +4,13 @@ import { el } from '../dom.js';
 
 /**
  * columns: [{ label, value: (row, index) => child, className }]
- * `caption` names the table for assistive tech and the scroll region.
+ * `caption` names the table for assistive tech and the scroll region. With
+ * `stack`, narrow screens show each row as a labelled record instead of scrolling.
  */
-export function dataTable({ columns, rows, caption, className }) {
+export function dataTable({ columns, rows, caption, className, stack = false }) {
   return el(
     'div',
-    { class: 'table-wrap', tabindex: 0, role: 'region', 'aria-label': caption },
+    { class: ['table-wrap', stack && 'table-stack'], tabindex: 0, role: 'region', 'aria-label': caption },
     el(
       'table',
       { class: ['table', className] },
@@ -30,7 +31,7 @@ export function dataTable({ columns, rows, caption, className }) {
           el(
             'tr',
             {},
-            columns.map((col) => el('td', { class: col.className }, col.value(row, index))),
+            columns.map((col) => el('td', { class: col.className, dataset: { label: col.label } }, col.value(row, index))),
           ),
         ),
       ),

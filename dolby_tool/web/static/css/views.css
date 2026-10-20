@@ -239,6 +239,22 @@
   padding: var(--space-5);
 }
 
+/* Four short facts read best as a 2x2 grid, never as three plus an orphan. */
+.spec-grid :is(.span-video, .span-color) .kv {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* Cards share a row height; the video card anchors its bitrate meter to the bottom edge. */
+.spec-grid > .span-video {
+  display: flex;
+  flex-direction: column;
+}
+
+.spec-grid > .span-video .card-body {
+  flex: 1;
+  align-content: space-between;
+}
+
 @media (max-width: 1180px) {
   .spec-grid[data-layout] > :is(.span-video, .span-color, .span-dv, .span-container) {
     grid-column: span 6;
@@ -604,6 +620,32 @@
 
 .winner-key svg {
   color: var(--success-text);
+}
+
+/* The dimension labels stay put while the file columns scroll sideways on narrow screens. */
+.dimensions-card .card-body {
+  padding-inline: 0;
+}
+
+.dimensions-card .table-wrap {
+  margin: 0;
+  padding: 0;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.dimension-table :is(th, td):first-child {
+  padding-left: var(--space-5);
+}
+
+.dimension-table :is(th, td):last-child {
+  padding-right: var(--space-5);
+}
+
+.dimension-table :is(thead, tbody) th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--surface-1);
 }
 
 .dimension-table thead th {
