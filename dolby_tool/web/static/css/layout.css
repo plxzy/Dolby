@@ -265,7 +265,7 @@
     z-index: 30;
   }
 
-  .notices .notice[data-tone] {
+  .notices .env-note {
     background: var(--surface-1);
     box-shadow: var(--shadow-pop);
   }

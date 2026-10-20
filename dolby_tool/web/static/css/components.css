@@ -41,6 +41,19 @@
   opacity: 0.45;
 }
 
+/* Unavailable on this system: stays focusable so its reason can be announced and shown. */
+.btn[aria-disabled='true'] {
+  border-style: dashed;
+  background: transparent;
+  color: var(--text-3);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.btn[aria-disabled='true']:hover {
+  background: transparent;
+}
+
 .btn-primary {
   border-color: transparent;
   background: var(--accent-solid);
@@ -846,6 +859,88 @@ input[type='range']:focus-visible {
 
 .notice-dismiss {
   margin: -4px -6px -4px 0;
+}
+
+/* Environment note: a one-line summary that opens into the list of what is switched off. */
+.env-note {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+}
+
+.env-note[data-tone='warn'] {
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  background: var(--warn-tint);
+}
+
+.env-note summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 36px 6px 10px;
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  list-style: none;
+}
+
+.env-note summary::-webkit-details-marker {
+  display: none;
+}
+
+.env-note summary:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.env-note summary > svg:first-child {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.env-note[data-tone='warn'] summary > svg:first-child {
+  color: var(--warn-text);
+}
+
+.env-note-caret {
+  margin-left: auto;
+  color: var(--text-3);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.env-note[open] .env-note-caret {
+  transform: rotate(180deg);
+}
+
+.env-note-list {
+  display: grid;
+  gap: 6px;
+  padding: 2px 12px 12px 12px;
+}
+
+.env-note-list li {
+  display: flex;
+  gap: 8px;
+}
+
+.env-note-list li::before {
+  content: '';
+  flex-shrink: 0;
+  width: 4px;
+  height: 4px;
+  margin-top: 0.6em;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.env-note-dismiss {
+  position: absolute;
+  top: 4px;
+  right: 4px;
 }
 
 .toast-region {

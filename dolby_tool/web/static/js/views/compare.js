@@ -4,7 +4,7 @@ import { getJson, postJson } from '../api.js';
 import { badge } from '../components/badge.js';
 import { card } from '../components/card.js';
 import { drawer } from '../components/drawer.js';
-import { bone, emptyState, notice, toast, withCode } from '../components/feedback.js';
+import { blockedHere, bone, emptyState, markUnavailable, notice, toast, withCode } from '../components/feedback.js';
 import { icon } from '../components/icon.js';
 import { scoreBar, scoreLegend } from '../components/scorebar.js';
 import { dataTable } from '../components/table.js';
@@ -64,7 +64,11 @@ const DIMENSIONS = [
   { label: 'Atmos', winner: 'audio_atmos', value: (r) => mark(r.audio_atmos) },
   { label: 'Subtitles', winner: 'subtitle_count', value: (r) => r.subtitle_count },
   { label: 'Size', value: (r) => r.size },
-  { label: 'Duration', value: (r) => r.duration },
+  {
+    label: 'Duration',
+    // The backend's "166m 00s" differs from Inspect's h:mm:ss, so prefer the raw seconds when present.
+    value: (r, spec) => (spec?.container?.duration_s != null ? fmt.duration(spec.container.duration_s) : r.duration),
+  },
 ];
 
 const files = new Map(); // path -> size in bytes (null when unknown)
@@ -105,8 +109,7 @@ export function init({ capabilities }) {
   });
   capabilities.then((caps) => {
     if (caps && !caps.tools.osascript) {
-      ui.add.disabled = true;
-      ui.add.title = 'The native file picker needs macOS — drop files or add a folder instead';
+      markUnavailable(ui.add, 'The native file picker needs macOS — drop files or add a folder instead');
     }
   });
   renderWeights();
@@ -122,6 +125,7 @@ function addPaths(entries) {
 }
 
 async function pickFiles() {
+  if (blockedHere(ui.add)) return;
   try {
     const { paths } = await getJson('/api/pick', { multi: true });
     addPaths(paths.map((path) => [path, null]));
@@ -428,12 +432,12 @@ function rankCard({ row, score, weightsUsed, rank, max, tiedBest }) {
   );
 }
 
-function dimensionsCard({ rows, winners }, order, ranks) {
+function dimensionsCard({ rows, winners, specs = [] }, order, ranks) {
   const cell = (dimension, index) => {
     const best = dimension.winner ? (winners[dimension.winner] ?? []) : [];
     // A row where every file ties has no winner worth marking.
     const isWinner = best.includes(index) && best.length < rows.length;
-    const value = dimension.value(rows[index]);
+    const value = dimension.value(rows[index], specs.find((spec) => spec.path === rows[index].path));
     return el(
       'td',
       { class: [dimension.mono && 'mono', isWinner && 'is-winner'] },

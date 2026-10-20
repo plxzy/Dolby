@@ -5,7 +5,7 @@ import { badge, verdict } from '../components/badge.js';
 import { card, checklist, kvList } from '../components/card.js';
 import { copyMenu } from '../components/copy.js';
 import { jsonDrawer } from '../components/drawer.js';
-import { bone, emptyState, notice, toast, withCode } from '../components/feedback.js';
+import { blockedHere, bone, emptyState, markUnavailable, notice, toast, withCode } from '../components/feedback.js';
 import { icon } from '../components/icon.js';
 import { meter } from '../components/meter.js';
 import { dataTable } from '../components/table.js';
@@ -29,13 +29,14 @@ const DV_PROFILE_NOTES = {
 let form;
 let input;
 let output;
+let browse;
 let requestId = 0;
 
 export function init({ capabilities }) {
   form = $('#inspect-form');
   input = $('#inspect-path');
   output = $('#inspect-output');
-  const browse = $('#inspect-browse');
+  browse = $('#inspect-browse');
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -49,8 +50,7 @@ export function init({ capabilities }) {
   });
   capabilities.then((caps) => {
     if (caps && !caps.tools.osascript) {
-      browse.disabled = true;
-      browse.title = 'The native file picker needs macOS — paste a path or drop a file instead';
+      markUnavailable(browse, 'The native file picker needs macOS — paste a path or drop a file instead');
     }
   });
   reset();
@@ -64,6 +64,7 @@ function reset() {
 }
 
 async function pickFile() {
+  if (blockedHere(browse)) return;
   try {
     const { paths } = await getJson('/api/pick');
     if (paths.length) inspect(paths[0]);
@@ -425,6 +426,7 @@ function audioCard(tracks) {
     body: tracks.length
       ? dataTable({
           caption: 'Audio tracks',
+          stack: true,
           columns: [
             { label: '#', className: 'num col-index', value: (_, i) => i + 1 },
             {
@@ -470,6 +472,7 @@ function subtitlesCard(tracks) {
     body: tracks.length
       ? dataTable({
           caption: 'Subtitle tracks',
+          stack: true,
           columns: [
             { label: '#', className: 'num col-index', value: (_, i) => i + 1 },
             { label: 'Format', value: (t) => fmt.codecName(t.codec) },

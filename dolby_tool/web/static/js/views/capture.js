@@ -58,7 +58,12 @@ export function init({ capabilities }) {
   });
   capabilities.then((caps) => {
     liveCaptureMissing = Boolean(caps && !caps.tools.log);
-    if (liveCaptureMissing) replace(ui.platform, platformNote());
+    if (liveCaptureMissing) {
+      replace(ui.platform, platformNote());
+      // Importing is the way in here; Start stays available but stops being the headline action.
+      ui.start.classList.remove('btn-primary');
+      ui.importButton.classList.add('btn-primary');
+    }
   });
   replace(ui.summary, idleState());
 }
@@ -235,13 +240,7 @@ function platformNote() {
     title: 'Live capture needs macOS',
     body: withCode(
       'It streams TV.app’s unified log with `log stream`, which only exists on macOS. ' +
-        'Here you can still import a log saved on a Mac and get the same summary.',
-    ),
-    actions: el(
-      'button',
-      { class: 'btn btn-sm', type: 'button', onclick: () => ui.file.click() },
-      icon('import', { size: 15 }),
-      'Import saved log…',
+        'Use “Import saved log…” to load one saved on a Mac and get the same summary.',
     ),
   });
 }

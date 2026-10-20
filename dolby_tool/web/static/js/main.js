@@ -4,7 +4,7 @@
  */
 
 import { getJson } from './api.js';
-import { notice } from './components/feedback.js';
+import { environmentNote } from './components/feedback.js';
 import { hydrateIcons } from './components/icon.js';
 import { initRouter } from './router.js';
 import { initTheme } from './theme.js';
@@ -16,13 +16,12 @@ const DISMISS_KEY = 'dolby-tool.capabilities-dismissed';
 
 /** What each optional tool powers, in the user's terms. */
 const TOOL_ROLES = {
-  ffprobe: 'inspecting files (ffprobe)',
-  mediainfo: 'MediaInfo’s Atmos check',
-  osascript: 'the native file picker',
+  ffprobe: 'ffprobe — files can’t be inspected',
+  mediainfo: 'MediaInfo Atmos check',
+  osascript: 'native file picker',
   log: 'live TV.app capture',
   mdfind: 'Spotlight lookup for dropped files',
 };
-const listFormat = new Intl.ListFormat('en', { type: 'conjunction' });
 
 function platformName(sysname) {
   return sysname === 'Darwin' ? 'macOS' : sysname || 'this system';
@@ -40,12 +39,14 @@ function showCapabilityNotice(caps) {
   } catch {
     // Storage unavailable: show the notice; dismissal just won't persist.
   }
-  const roles = listFormat.format(missing.map((tool) => TOOL_ROLES[tool] ?? tool));
+  // Without ffprobe nothing can be inspected, so only that case is worth raising a flag for.
+  const critical = missing.includes('ffprobe');
   document.getElementById('notices').append(
-    notice({
-      // Without ffprobe nothing can be inspected, so only that case is worth raising a flag for.
-      tone: missing.includes('ffprobe') ? 'warn' : 'quiet',
-      body: `Running on ${platformName(caps.platform)} — not available here: ${roles}.`,
+    environmentNote({
+      title: critical ? 'Setup needed' : `Limited on ${platformName(caps.platform)}`,
+      items: missing.map((tool) => `No ${TOOL_ROLES[tool] ?? tool}`),
+      tone: critical ? 'warn' : 'quiet',
+      open: critical,
       onDismiss: () => {
         try {
           localStorage.setItem(DISMISS_KEY, signature);

@@ -57,6 +57,53 @@ export function toast(message, { tone = 'info' } = {}) {
   }, 4500);
 }
 
+/**
+ * Mark a control as unavailable on this system without disabling it, so the
+ * reason stays reachable by hover, keyboard and screen reader.
+ */
+export function markUnavailable(button, reason) {
+  button.setAttribute('aria-disabled', 'true');
+  button.title = reason;
+  button.dataset.reason = reason;
+}
+
+/** For click handlers of `markUnavailable` controls: explains why nothing happens and returns true. */
+export function blockedHere(button) {
+  if (button.getAttribute('aria-disabled') !== 'true') return false;
+  toast(button.dataset.reason, { tone: 'info' });
+  return true;
+}
+
+/** A collapsible, dismissible note about what this environment lacks. `items` are short strings. */
+export function environmentNote({ title, items, tone = 'quiet', open = false, onDismiss }) {
+  const node = el(
+    'details',
+    { class: 'env-note', dataset: { tone }, open },
+    el(
+      'summary',
+      {},
+      icon(tone === 'warn' ? 'alert' : 'info', { size: 16 }),
+      el('span', {}, title),
+      icon('chevronDown', { size: 14, className: 'env-note-caret' }),
+    ),
+    el('ul', { class: 'env-note-list' }, items.map((item) => el('li', {}, item))),
+    el(
+      'button',
+      {
+        class: 'btn btn-ghost btn-sm btn-icon env-note-dismiss',
+        type: 'button',
+        'aria-label': 'Dismiss this note',
+        onclick: () => {
+          node.remove();
+          onDismiss?.();
+        },
+      },
+      icon('close', { size: 14 }),
+    ),
+  );
+  return node;
+}
+
 export function emptyState({ iconName, title, body, actions }) {
   return el(
     'div',
