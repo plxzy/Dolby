@@ -108,11 +108,11 @@
   --accent: light-dark(#0071e3, #0a84ff);
   --accent-text: light-dark(#0066cc, #5aaeff);
   --accent-solid: light-dark(#0068d1, #0a6cd6);
-  --accent-solid-hover: light-dark(#005bb8, #1a7ae6);
+  --accent-solid-hover: light-dark(#005bb8, #1472de);
   --accent-tint: light-dark(rgb(0 113 227 / 0.1), rgb(10 132 255 / 0.16));
 
   --success: light-dark(#28a745, #34c759);
-  --success-text: light-dark(#177a34, #4cd97b);
+  --success-text: light-dark(#156a2f, #4cd97b);
   --success-tint: light-dark(rgb(40 167 69 / 0.11), rgb(52 199 89 / 0.15));
 
   --warn: light-dark(#e8890c, #ffb340);
