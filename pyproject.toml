@@ -39,6 +39,10 @@ dev = [
 testpaths = ["tests"]
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
 xfail_strict = true
+filterwarnings = [
+    # Starlette's TestClient nudges towards `httpx2`; FastAPI's TestClient still re-exports it.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
 markers = [
     "requires_ffmpeg: needs ffmpeg/ffprobe on PATH (skipped otherwise)",
 ]
@@ -48,7 +52,9 @@ target-version = "py314"
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP"]
+select = ["E", "W", "F", "I", "UP", "B", "C4", "PIE", "SIM", "PERF", "RUF", "ASYNC"]
+# RUF001-003: the codebase deliberately uses typographic characters (—, →, ·) in strings and comments.
+ignore = ["RUF001", "RUF002", "RUF003", "SIM105", "SIM108", "PERF401"]
 
 [tool.ruff.format]
 docstring-code-format = true
