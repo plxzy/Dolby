@@ -55,3 +55,29 @@ def test_guess_query_movie_with_year() -> None:
     assert kind == "movie"
     assert title.startswith("Dune")
     assert season is None and episode is None
+
+
+@pytest.mark.parametrize("media", [ratings.MEDIA_MOVIE, ratings.MEDIA_TV])
+def test_gb_shared_movie_and_tv_ratings_match_both_kinds(media: str) -> None:
+    r = ratings.lookup(143444, media, "12A")
+    assert r is not None
+    assert r.media == ratings.MEDIA_BOTH
+    assert r.itunes_extc() == "uk-movie|12A|325|"
+
+
+def test_gb_tv_only_rating_does_not_match_movies() -> None:
+    assert ratings.lookup(143444, ratings.MEDIA_TV, "Caution") is not None
+    assert ratings.lookup(143444, ratings.MEDIA_MOVIE, "Caution") is None
+
+
+def test_exact_media_wins_over_shared_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    def entry(media: str, value: str) -> dict:
+        return {"media": media, "prefix": "x", "itunes-code": "PG", "itunes-value": value, "description": ""}
+
+    table = [
+        {"country": "Testland", "storeCode": 1, "ratings": [entry("Movie & TV", "shared"), entry("Movie", "movie")]}
+    ]
+    monkeypatch.setattr(ratings, "_table", lambda: table)
+
+    assert ratings.lookup(1, ratings.MEDIA_MOVIE, "PG").itunes_value == "movie"
+    assert ratings.lookup(1, ratings.MEDIA_TV, "PG").itunes_value == "shared"
