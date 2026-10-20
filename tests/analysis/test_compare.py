@@ -13,3 +13,14 @@ def test_compare_uses_custom_weights(make_spec, monkeypatch):
     assert res.weights["subtitles"] == 0.0
     assert res.scores[0].components["dv_present"] == 100.0
     assert res.scores[0].components["subtitles"] == 0.0
+
+
+def test_score_max_follows_custom_weights(make_spec, monkeypatch):
+    spec = make_spec("a.mp4")
+    monkeypatch.setattr("dolby_tool.analysis.compare.inspect_file", lambda _p: spec)
+
+    default = compare_files(["/media/a.mp4"]).scores[0]
+    custom = compare_files(["/media/a.mp4"], weights={"atmos": 0, "bit_rate_mbps": 50}).scores[0]
+
+    assert default.max == 110
+    assert custom.max == 110 - 15 - 20 + 50

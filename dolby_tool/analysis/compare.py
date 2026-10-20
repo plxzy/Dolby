@@ -59,8 +59,9 @@ def _scores(specs: list[MediaSpec], weights: dict[str, Number]) -> list[Score]:
     components = [_components(spec, weights) for spec in specs]
     totals = [round(sum(c.values()), 1) for c in components]
     best_total = max(totals, default=None)
+    maximum = sum(weights.values())
     return [
-        Score(total=total, components=parts, max=sum(WEIGHTS.values()), is_best=total == best_total)
+        Score(total=total, components=parts, max=maximum, is_best=total == best_total)
         for parts, total in zip(components, totals, strict=True)
     ]
 
