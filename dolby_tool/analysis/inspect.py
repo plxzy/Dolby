@@ -4,7 +4,8 @@ We run two ffprobe passes:
 1. -show_format -show_streams → container + per-stream info, including DOVI
    side-data on the video stream.
 2. -show_frames -read_intervals "%+#1" on the video stream → frame-level side data, which
-   is where HDR10 mastering display, content light level, and HDR10+ dynamic metadata live.
+   is where HDR10+ dynamic metadata lives, and where HDR10 mastering display / content light
+   level show up when they are carried in the bitstream instead of the container.
 
 If `mediainfo` is on PATH we also run it for richer Atmos detection (E-AC-3 JOC).
 """
@@ -111,7 +112,8 @@ def _video_spec(path: str, stream: Raw, fmt: Raw) -> VideoSpec:
     stream_side = stream.get("side_data_list") or []
     frame_side = _first_frame_side_data(path, stream["index"])
     fourcc = (stream.get("codec_tag_string") or "").strip().lower()
-    dolby_vision = _dolby_vision(stream_side + frame_side)
+    side_data = stream_side + frame_side
+    dolby_vision = _dolby_vision(side_data)
     bit_rate = to_int(stream.get("bit_rate")) or to_int(fmt.get("bit_rate"))
     width, height = stream.get("width"), stream.get("height")
     return VideoSpec(
@@ -131,8 +133,8 @@ def _video_spec(path: str, stream: Raw, fmt: Raw) -> VideoSpec:
         color_space=stream.get("color_space"),
         dolby_vision=dolby_vision,
         hdr10=Hdr10(
-            mdcv=_has_side_data(frame_side, "Mastering display"),
-            cll=_has_side_data(frame_side, "Content light level"),
+            mdcv=_has_side_data(side_data, "Mastering display"),
+            cll=_has_side_data(side_data, "Content light level"),
         ),
         hdr10_plus=_has_side_data(frame_side, "SMPTE 2094-40", "HDR10+"),
     )

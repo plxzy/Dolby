@@ -85,3 +85,32 @@ def test_mkv_with_attached_cover_inspects_the_real_video(media_clip, tmp_path):
     spec = inspect_file(str(clip))
 
     assert (spec.video.codec, spec.video.resolution) == ("h264", "640x360")
+
+
+_MDCV = {"side_data_type": "Mastering display metadata"}
+_CLL = {"side_data_type": "Content light level metadata"}
+_VIDEO = {"index": 0, "codec_type": "video", "codec_name": "hevc", "width": 3840, "height": 2160}
+
+
+def test_hdr10_found_in_stream_side_data(media_file, monkeypatch):
+    # Container-level mdcv/clli boxes (MP4/MKV) are listed on the stream, not on any frame.
+    stream = {**_VIDEO, "side_data_list": [_MDCV, _CLL]}
+    monkeypatch.setattr("dolby_tool.analysis.inspect.ffprobe_json", _fake_ffprobe([stream]))
+
+    hdr10 = inspect_file(media_file).video.hdr10
+
+    assert (hdr10.mdcv, hdr10.cll) == (True, True)
+
+
+def test_hdr10_found_in_frame_side_data(media_file, monkeypatch):
+    monkeypatch.setattr("dolby_tool.analysis.inspect.ffprobe_json", _fake_ffprobe([_VIDEO], [_CLL]))
+
+    hdr10 = inspect_file(media_file).video.hdr10
+
+    assert (hdr10.mdcv, hdr10.cll) == (False, True)
+    assert hdr10.present
+
+
+def test_sdr_has_no_hdr10(media_file, monkeypatch):
+    monkeypatch.setattr("dolby_tool.analysis.inspect.ffprobe_json", _fake_ffprobe([_VIDEO]))
+    assert not inspect_file(media_file).video.hdr10.present
