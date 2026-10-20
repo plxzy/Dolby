@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from dolby_tool.common import ToolError
 from dolby_tool.convert import mux
 
 VIDEO = {"index": 0, "codec_type": "video", "codec_name": "h264"}
@@ -155,3 +156,97 @@ def test_video_sample_entry_tag(video, fourcc, strict, dolby_vision, source, ffm
     assert values(cmd, "-strict") == ([strict] if strict else [])
     assert summary["video_tag"] == fourcc
     assert summary["dolby_vision"] == dolby_vision
+
+
+# --------------------------------------------------------------------- non-primary titles
+
+
+@pytest.mark.parametrize(
+    ("title", "non_primary"),
+    [
+        ("Director's Commentary", True),
+        ("Commentary with the cast", True),
+        ("English (AD)", True),
+        ("English AD", True),
+        ("Audio Description", True),
+        ("English SDH", True),
+        ("Cast & Crew", True),
+        ("Director's Cut", False),
+        ("Broadcast Mix", False),
+        ("Cast Away 5.1", False),
+        ("Dad Joke", False),
+        ("Surround", False),
+        (None, False),
+    ],
+)
+def test_non_primary_title_matches_whole_words_only(title, non_primary) -> None:
+    stream = mux.StreamInfo(index=1, codec="eac3", codec_type="audio", title=title)
+    assert mux._is_non_primary(stream) is non_primary
+
+
+def test_commentary_track_is_not_the_default_even_if_better_codec(source, ffmpeg, probe_streams) -> None:
+    probe_streams(VIDEO, audio(1, "eac3", tags={"title": "Director's Commentary"}), audio(2, "aac"))
+    assert run_mux(source)["default_audio_index"] == 1
+
+
+def test_broadcast_title_does_not_demote_a_track(source, ffmpeg, probe_streams) -> None:
+    probe_streams(VIDEO, audio(1, "eac3", tags={"title": "Broadcast Mix"}), audio(2, "aac"))
+    assert run_mux(source)["default_audio_index"] == 0
+
+
+# --------------------------------------------------------------------- subtitles
+
+
+def test_only_convertible_subtitles_are_mapped(source, ffmpeg, probe_streams) -> None:
+    probe_streams(
+        VIDEO,
+        audio(1, "eac3"),
+        subtitle(2, "subrip"),
+        subtitle(3, "ass"),
+        subtitle(4, "hdmv_pgs_subtitle"),
+        subtitle(5, "hdmv_text_subtitle"),
+        subtitle(6, "dvb_subtitle"),
+        subtitle(7, "dvd_subtitle"),
+        subtitle(8, "eia_608"),
+    )
+    summary = run_mux(source)
+
+    (cmd,) = ffmpeg
+    assert values(cmd, "-map") == ["0:0", "0:1", "0:2?", "0:3?"]
+    assert values(cmd, "-c:s:0") == values(cmd, "-c:s:1") == ["mov_text"]
+    assert summary["text_subs_included"] == 2
+    assert summary["bitmap_subs_dropped"] == 1
+    assert [(s["index"], s["codec"]) for s in summary["subs_skipped"]] == [
+        (5, "hdmv_text_subtitle"),
+        (6, "dvb_subtitle"),
+        (7, "dvd_subtitle"),
+        (8, "eia_608"),
+    ]
+    assert all(s["reason"] for s in summary["subs_skipped"])
+
+
+def test_pgs_passthrough_keeps_only_pgs(source, ffmpeg, probe_streams) -> None:
+    probe_streams(VIDEO, audio(1, "eac3"), subtitle(2, "hdmv_pgs_subtitle"), subtitle(3, "dvb_subtitle"))
+    summary = mux.mux(source, source.with_suffix(".m4v"), include_bitmap_subs_as_passthrough=True)
+
+    assert values(ffmpeg[0], "-map") == ["0:0", "0:1", "0:2?"]
+    assert values(ffmpeg[0], "-c:s:0") == ["copy"]
+    assert summary["bitmap_subs_dropped"] == 0
+    assert [s["index"] for s in summary["subs_skipped"]] == [3]
+
+
+# --------------------------------------------------------------------- failure cleanup
+
+
+def test_partial_output_is_deleted_when_ffmpeg_fails(source, probe_streams, monkeypatch) -> None:
+    probe_streams(VIDEO, audio(1, "eac3"))
+    output = source.with_suffix(".m4v")
+
+    def failing_run_tool(cmd, **kwargs):
+        Path(cmd[-1]).write_bytes(b"half a file")
+        raise ToolError("ffmpeg failed: boom", cmd=cmd, returncode=1)
+
+    monkeypatch.setattr(mux, "run_tool", failing_run_tool)
+    with pytest.raises(ToolError, match="boom"):
+        mux.mux(source, output)
+    assert not output.exists()

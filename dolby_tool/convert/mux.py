@@ -15,20 +15,24 @@ without dec3/colr patching. Treat the patchers as last-resort knobs for
 specific bitstream-mismatch cases, not as a default pipeline step.
 """
 
+import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..common import ffprobe_json, run_tool, to_int
+from ..common import ToolError, ffprobe_json, run_tool, to_int
 
 # Audio codecs Apple players decode from MP4. Everything else (TrueHD/MLP, DTS,
 # PCM, Vorbis, …) is skipped: ffmpeg refuses or only experimentally supports
 # muxing it into MP4, and TV.app could not play it anyway.
 APPLE_AUDIO_CODECS = frozenset({"aac", "ac3", "eac3", "ac4", "alac", "flac", "mp3", "opus"})
 
-# Codec families we recognise during stream selection / reporting.
-_TEXT_SUB_CODECS = {"subrip", "ass", "ssa", "mov_text", "webvtt", "text"}
-_BITMAP_SUB_CODECS = {"hdmv_pgs_subtitle", "dvb_subtitle", "dvd_subtitle"}
+# Text subtitle codecs ffmpeg can convert to `mov_text`. Everything else is
+# skipped, except PGS, which `subs_pgs.py` turns into VobSub in a second pass.
+TEXT_SUB_CODECS = frozenset({"subrip", "ass", "ssa", "mov_text", "webvtt", "text"})
+PGS_CODEC = "hdmv_pgs_subtitle"
 
 
 @dataclass
@@ -54,14 +58,12 @@ class SkippedStream:
 class ProbeResult:
     video: StreamInfo
     audios: list[StreamInfo]  # only codecs Apple players can play from MP4
-    text_subs: list[StreamInfo]
-    bitmap_subs: list[StreamInfo]
+    text_subs: list[StreamInfo]  # convertible to mov_text
+    bitmap_subs: list[StreamInfo]  # PGS only
     has_chapters: bool
     raw: dict[str, Any]
     skipped_audio: list[SkippedStream] = field(default_factory=list)
-
-    def all_subs(self) -> list[StreamInfo]:
-        return self.text_subs + self.bitmap_subs
+    skipped_subs: list[SkippedStream] = field(default_factory=list)
 
 
 def probe(source: Path) -> ProbeResult:
@@ -71,6 +73,7 @@ def probe(source: Path) -> ProbeResult:
     video: StreamInfo | None = None
     audios: list[StreamInfo] = []
     skipped_audio: list[SkippedStream] = []
+    skipped_subs: list[SkippedStream] = []
     text_subs: list[StreamInfo] = []
     bitmap_subs: list[StreamInfo] = []
     for s in raw.get("streams", []):
@@ -89,10 +92,14 @@ def probe(source: Path) -> ProbeResult:
         elif info.codec_type == "audio":
             skipped_audio.append(SkippedStream(info.index, info.codec, "not playable from MP4 by Apple players"))
         elif info.codec_type == "subtitle":
-            if info.codec in _BITMAP_SUB_CODECS:
+            if info.codec in TEXT_SUB_CODECS:
+                text_subs.append(info)
+            elif info.codec == PGS_CODEC:
                 bitmap_subs.append(info)
             else:
-                text_subs.append(info)
+                skipped_subs.append(
+                    SkippedStream(info.index, info.codec, "cannot be converted to an MP4 subtitle track")
+                )
     if video is None:
         raise ValueError(f"No video stream found in {source}")
     return ProbeResult(
@@ -103,6 +110,7 @@ def probe(source: Path) -> ProbeResult:
         has_chapters=bool(raw.get("chapters")),
         raw=raw,
         skipped_audio=skipped_audio,
+        skipped_subs=skipped_subs,
     )
 
 
@@ -111,21 +119,16 @@ def probe(source: Path) -> ProbeResult:
 # ones), then lossless, then lossy multichannel, then stereo lossy.
 _CODEC_SCORE = {"eac3": 100, "ac4": 90, "alac": 80, "flac": 80, "ac3": 70, "opus": 50, "aac": 40, "mp3": 20}
 
-# Track-title keywords that indicate a non-primary track we should NOT pick
-# as the default (commentary, audio description, etc.).
-_NON_PRIMARY_KEYWORDS = (
-    "commentary",
-    "comment",
-    "director",
-    "cast",
-    "audio description",
-    "descriptive",
-    "described",
-    " ad ",
-    "(ad)",
-    "sdh",
-    "vi ",
-    "visually impaired",
+# Track-title patterns that indicate a non-primary track we should NOT pick as
+# the default (commentary, audio description, SDH, …). Whole words only, so
+# "Broadcast" and "Director's Cut" don't match.
+_NON_PRIMARY_RE = re.compile(
+    r"\b(?:"
+    r"commentary|comments?|audio[ -]description|descriptive|described|visually[ -]impaired"
+    r"|ad|sdh|vi"
+    r"|cast\s*(?:&|and)\s*crew|(?:director|cast)(?:['\u2019]s)?\s+(?:track|audio|talk)"
+    r")\b",
+    re.IGNORECASE,
 )
 
 
@@ -174,13 +177,10 @@ def _dovi_profile(video: StreamInfo) -> int | None:
 
 
 def _is_non_primary(a: StreamInfo) -> bool:
-    title = (a.title or "").lower()
-    if any(kw in f" {title} " for kw in _NON_PRIMARY_KEYWORDS):
+    if _NON_PRIMARY_RE.search(a.title or ""):
         return True
     disp = a.raw.get("disposition") or {}
-    if disp.get("comment") or disp.get("descriptions") or disp.get("visual_impaired"):
-        return True
-    return False
+    return bool(disp.get("comment") or disp.get("descriptions") or disp.get("visual_impaired"))
 
 
 def _channels(a: StreamInfo) -> int:
@@ -212,6 +212,16 @@ def _default_audio_index(audios: list[StreamInfo]) -> int:
 
     best = max(enumerate(audios), key=score)
     return best[0]
+
+
+@contextmanager
+def discard_on_failure(output: Path) -> Iterator[None]:
+    """Delete a half-written `output` if the wrapped ffmpeg run fails or is interrupted."""
+    try:
+        yield
+    except ToolError, KeyboardInterrupt:
+        output.unlink(missing_ok=True)
+        raise
 
 
 def mux(
@@ -297,7 +307,8 @@ def mux(
     ]
 
     # No timeout: a stream copy of a full-length film legitimately takes minutes.
-    result = run_tool(cmd, timeout=None)
+    with discard_on_failure(output):
+        result = run_tool(cmd, timeout=None)
 
     return {
         "source": str(source),
@@ -309,6 +320,7 @@ def mux(
         "default_audio_index": default_audio,
         "audio_skipped": [asdict(s) for s in info.skipped_audio],
         "text_subs_included": len(info.text_subs),
+        "subs_skipped": [asdict(s) for s in info.skipped_subs],
         "bitmap_subs_dropped": 0 if include_bitmap_subs_as_passthrough else len(info.bitmap_subs),
         "chapters": info.has_chapters,
         "ffmpeg_stderr_tail": result.stderr.splitlines()[-20:],
