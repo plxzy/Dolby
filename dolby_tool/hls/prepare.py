@@ -26,29 +26,48 @@ class StreamInfo:
     media_bytes_stored: int
 
 
+@dataclass(frozen=True, slots=True)
+class FlatStream:
+    """A persisted stream and the names of the two files it becomes: its playlist and one segment."""
+
+    stream_id: str
+    info: StreamInfo
+    playlist: str
+    segment: str
+
+
 def prepare_hls_from_movpkg(
     movpkg: str | Path,
     output_dir: str | Path,
     *,
     overwrite: bool = False,
 ) -> dict[str, object]:
-    """Flatten a simple persisted-HLS `.movpkg` into a serveable HLS folder."""
+    """Flatten a simple persisted-HLS `.movpkg` into a serveable HLS folder.
+
+    Each stream's fragments are concatenated into the one file its playlist byte-ranges into.
+    Those file names come from the package, so any that would land outside `output_dir` (a URL,
+    `../`, an absolute path) are refused before anything is written. `overwrite` accepts a
+    non-empty `output_dir`: files with the same names are replaced and anything else already
+    there, such as an earlier package's segments, is left in place.
+    """
     source = Path(movpkg).expanduser().resolve()
     output = Path(output_dir).expanduser().resolve()
     if not source.is_dir():
         raise ValueError(f".movpkg directory does not exist: {source}")
     if output.exists() and any(output.iterdir()) and not overwrite:
         raise ValueError(f"Output directory is not empty: {output}")
-    output.mkdir(parents=True, exist_ok=True)
 
     boot = _parse_xml(source / "boot.xml")
-    (output / MASTER_PLAYLIST).write_text(read_playlist(_master_playlist_path(source, boot)), encoding="utf-8")
-    streams = [_flatten_stream(source, stream, output) for stream in _boot_streams(source, boot)]
+    master = _master_playlist_path(source, boot)
+    streams = [_flat_stream(source, stream, output) for stream in _boot_streams(source, boot)]
+
+    output.mkdir(parents=True, exist_ok=True)
+    (output / MASTER_PLAYLIST).write_text(read_playlist(master), encoding="utf-8")
     return {
         "source": str(source),
         "output_dir": str(output),
         "master_playlist": MASTER_PLAYLIST,
-        "streams": streams,
+        "streams": [_write_stream(output, stream) for stream in streams],
     }
 
 
@@ -74,27 +93,43 @@ def prepare_hls_summary_markdown(summary: dict[str, object]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _flatten_stream(source: Path, stream: BootStream, output: Path) -> dict[str, object]:
-    """Concatenate one stream's fragments into the single file its playlist byte-ranges into."""
-    stream_dir = source / stream.path
-    info = _parse_stream_info(stream_dir)
-    playlist_name = _url_basename(stream.network_url) or info.playlist.name
-    segment_name = first_segment_uri(info.playlist)
-    segment_path = output / segment_name
+def _flat_stream(source: Path, stream: BootStream, output: Path) -> FlatStream:
+    info = _parse_stream_info(source / stream.path)
+    flat = FlatStream(
+        stream_id=stream.id,
+        info=info,
+        playlist=_url_basename(stream.network_url) or info.playlist.name,
+        segment=first_segment_uri(info.playlist),
+    )
+    for name in (flat.playlist, flat.segment):
+        _require_inside(output, name)
+    return flat
 
+
+def _write_stream(output: Path, stream: FlatStream) -> dict[str, object]:
+    """Concatenate the stream's fragments into its segment file and copy its playlist next to it."""
+    segment_path = output / stream.segment
+    segment_path.parent.mkdir(parents=True, exist_ok=True)
     with segment_path.open("wb") as f:
-        for fragment in info.fragments:
+        for fragment in stream.info.fragments:
             f.write(fragment.read_bytes())
 
-    (output / playlist_name).write_text(read_playlist(info.playlist), encoding="utf-8")
+    (output / stream.playlist).write_text(read_playlist(stream.info.playlist), encoding="utf-8")
     return {
-        "stream_id": stream.id,
-        "playlist": playlist_name,
-        "segment": segment_name,
+        "stream_id": stream.stream_id,
+        "playlist": stream.playlist,
+        "segment": stream.segment,
         "bytes": segment_path.stat().st_size,
-        "fragments": len(info.fragments),
-        "media_bytes_stored": info.media_bytes_stored,
+        "fragments": len(stream.info.fragments),
+        "media_bytes_stored": stream.info.media_bytes_stored,
     }
+
+
+def _require_inside(output: Path, name: str) -> None:
+    """Refuse a name from the package that would not land inside `output`."""
+    target = (output / name).resolve()
+    if urlparse(name).scheme or target == output or not target.is_relative_to(output):
+        raise ValueError(f"Refusing to write {name!r}: it does not resolve to a file inside {output}")
 
 
 def _master_playlist_path(movpkg: Path, boot: ET.Element) -> Path:

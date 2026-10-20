@@ -1,9 +1,11 @@
 from pathlib import Path
 
+import pytest
+
 from dolby_tool.hls.prepare import prepare_hls_from_movpkg, prepare_hls_summary_markdown
 
 
-def _write_movpkg(root: Path) -> Path:
+def _write_movpkg(root: Path, *, video_segment: str = "video_seg.m4s") -> Path:
     movpkg = root / "Test.movpkg"
     video_dir = movpkg / "0-video"
     audio_dir = movpkg / "1-audio"
@@ -29,7 +31,7 @@ def _write_movpkg(root: Path) -> Path:
         '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1,AUDIO="atmos"\nvideo.m3u8\n\x00',
         encoding="utf-8",
     )
-    _write_stream_info(video_dir, "video-source.m3u8", "video_seg.m4s", b"vinit", [b"v0", b"v1"])
+    _write_stream_info(video_dir, "video-source.m3u8", video_segment, b"vinit", [b"v0", b"v1"])
     _write_stream_info(audio_dir, "audio-source.m3u8", "audio_seg.m4s", b"ainit", [b"a0", b"a1"])
     return movpkg
 
@@ -111,3 +113,32 @@ def test_prepare_hls_from_movpkg_flattens_persisted_streams(tmp_path):
     ]
     rendered = prepare_hls_summary_markdown(summary)
     assert "| `0-video` | `video.m3u8` | `video_seg.m4s` | 3 | 9 | 9 |" in rendered
+
+
+@pytest.mark.parametrize(
+    "segment",
+    [
+        pytest.param("../escaped.m4s", id="parent-directory"),
+        pytest.param("{tmp}/escaped.m4s", id="absolute-path"),
+        pytest.param("https://cdn.example/escaped.m4s", id="url"),
+    ],
+)
+def test_prepare_refuses_segment_names_outside_the_output(tmp_path, segment):
+    movpkg = _write_movpkg(tmp_path, video_segment=segment.format(tmp=tmp_path))
+    output = tmp_path / "out"
+
+    with pytest.raises(ValueError, match="does not resolve to a file inside"):
+        prepare_hls_from_movpkg(movpkg, output)
+
+    assert not (tmp_path / "escaped.m4s").exists()
+    assert not output.exists()
+
+
+def test_prepare_writes_nested_segment_names_inside_the_output(tmp_path):
+    movpkg = _write_movpkg(tmp_path, video_segment="media/video_seg.m4s")
+    output = tmp_path / "out"
+
+    summary = prepare_hls_from_movpkg(movpkg, output)
+
+    assert (output / "media" / "video_seg.m4s").read_bytes() == b"vinitv0v1"
+    assert summary["streams"][0]["segment"] == "media/video_seg.m4s"
