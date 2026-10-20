@@ -56,8 +56,7 @@ def test_movpkg_selected_stereo_with_atmos_evidence_gets_verdict():
     events = [_parse_line(line) for line in lines]
     assert all(event is not None for event in events)
 
-    capture = LogCapture()
-    capture.events = [event for event in events if event is not None]
+    capture = LogCapture.from_events(event for event in events if event is not None)
     playback = capture.summarize()["playback"]
 
     assert playback["source"] == "hls"
@@ -90,8 +89,7 @@ def test_qdh1_cloud_capture_is_recognized_but_not_confirmed_dv():
     events = [_parse_line(line) for line in lines]
     assert all(event is not None for event in events)
 
-    capture = LogCapture()
-    capture.events = [event for event in events if event is not None]
+    capture = LogCapture.from_events(event for event in events if event is not None)
     summary = capture.summarize()
     playback = summary["playback"]
 
@@ -120,8 +118,7 @@ def test_tv_capture_keeps_current_best_and_observed_audio():
     events = [_parse_line(line) for line in lines]
     assert all(event is not None for event in events)
 
-    capture = LogCapture()
-    capture.events = [event for event in events if event is not None]
+    capture = LogCapture.from_events(event for event in events if event is not None)
     playback = capture.summarize()["playback"]
 
     assert playback["audio"]["format"] == "qaac"
@@ -181,8 +178,7 @@ def test_audio_status_text_is_normalized_from_codec_labels():
     assert events[0] is None
     assert all(event is not None for event in events[1:])
 
-    capture = LogCapture()
-    capture.events = [event for event in events if event is not None]
+    capture = LogCapture.from_events(event for event in events if event is not None)
     playback = capture.summarize()["playback"]
 
     assert playback["audio"]["format"] == "ec+3"
@@ -218,8 +214,7 @@ def test_audio_format_keeps_spatialization_fields_without_inventing_atmos():
     ]
     assert all(event is not None for event in events)
 
-    capture = LogCapture()
-    capture.events = [event for event in events if event is not None]
+    capture = LogCapture.from_events(event for event in events if event is not None)
     playback = capture.summarize()["playback"]
 
     assert playback["observed_audio"][0]["format"] == "ec+3"
@@ -273,8 +268,7 @@ def test_best_audio_prefers_qc3_over_aacp_stereo_fallback():
     events = [_parse_line(line) for line in lines]
     assert all(event is not None for event in events)
 
-    capture = LogCapture()
-    capture.events = [event for event in events if event is not None]
+    capture = LogCapture.from_events(event for event in events if event is not None)
     playback = capture.summarize()["playback"]
 
     assert playback["audio"]["format"] == "aacp"
@@ -320,8 +314,7 @@ def test_renderer_hints_parse_local_spatial_lines():
     events = [_parse_line(line) for line in lines]
     assert all(event is not None for event in events)
 
-    capture = LogCapture()
-    capture.events = [event for event in events if event is not None]
+    capture = LogCapture.from_events(event for event in events if event is not None)
     playback = capture.summarize()["playback"]
     renderer = playback["renderer_evidence"]
 
@@ -408,8 +401,7 @@ def test_quicktime_local_hls_evidence_parses_figstream_and_auspatial():
     events = [_parse_line(line) for line in lines]
     assert all(event is not None for event in events)
 
-    capture = LogCapture()
-    capture.events = [event for event in events if event is not None]
+    capture = LogCapture.from_events(event for event in events if event is not None)
     playback = capture.summarize()["playback"]
     renderer = playback["renderer_evidence"]
 
@@ -477,8 +469,7 @@ def test_renderer_hints_parse_spatialmgr_binding_block():
     events = [_parse_line(line) for line in lines]
     assert all(e is not None for e in events)
 
-    capture = LogCapture()
-    capture.events = [e for e in events if e is not None]
+    capture = LogCapture.from_events(e for e in events if e is not None)
     renderer = capture.summarize()["playback"]["renderer_evidence"]
 
     assert renderer["max_spatializable_channels"] == 16
@@ -498,8 +489,7 @@ def test_renderer_hints_parse_spatialmgr_non_capable_route():
     events = [_parse_line(line) for line in lines]
     assert all(e is not None for e in events)
 
-    capture = LogCapture()
-    capture.events = [e for e in events if e is not None]
+    capture = LogCapture.from_events(e for e in events if e is not None)
     renderer = capture.summarize()["playback"]["renderer_evidence"]
 
     assert renderer["max_spatializable_channels"] == 0
@@ -525,8 +515,7 @@ def test_renderer_hints_parse_hls_spatial_lines():
     events = [_parse_line(line) for line in lines]
     assert all(event is not None for event in events)
 
-    capture = LogCapture()
-    capture.events = [event for event in events if event is not None]
+    capture = LogCapture.from_events(event for event in events if event is not None)
     playback = capture.summarize()["playback"]
     renderer = playback["renderer_evidence"]
 
@@ -558,8 +547,7 @@ def test_renderer_verdict_handles_app_spatial_true_then_false():
     events = [_parse_line(line) for line in lines]
     assert all(event is not None for event in events)
 
-    capture = LogCapture()
-    capture.events = [event for event in events if event is not None]
+    capture = LogCapture.from_events(event for event in events if event is not None)
     renderer = capture.summarize()["playback"]["renderer_evidence"]
 
     assert renderer["app_spatial_rendering_ever_true"] is True
@@ -575,8 +563,7 @@ def test_capture_quality_notes_likely_missed_audio_init():
     ]
     assert all(event is not None for event in events)
 
-    capture = LogCapture()
-    capture.events = [event for event in events if event is not None]
+    capture = LogCapture.from_events(event for event in events if event is not None)
     playback = capture.summarize()["playback"]
 
     assert "audio" not in playback

@@ -21,8 +21,9 @@ import subprocess
 import threading
 import time
 from collections import deque
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 PREDICATE = (
     'process == "mediaplaybackd"'
@@ -630,6 +631,14 @@ class LogCapture:
         self._started_at: float | None = None
         self._listeners: list[asyncio.Queue] = []
         self._loop: asyncio.AbstractEventLoop | None = None
+
+    @classmethod
+    def from_events(cls, events: Iterable[dict[str, Any]], *, predicate: str = PREDICATE) -> Self:
+        """A capture that never ran, with `events` replayed through `add_event` (tests, saved logs)."""
+        capture = cls(predicate=predicate)
+        for event in events:
+            capture.add_event(event)
+        return capture
 
     # -- lifecycle ---------------------------------------------------------
 
