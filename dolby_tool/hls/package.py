@@ -172,7 +172,7 @@ def _ffmpeg_command(
         "-i",
         str(source),
         "-map",
-        "0:v:0",
+        "0:V:0",  # capital V: video streams other than attached pictures (cover art)
         "-map",
         f"0:a:{audio_stream}",
         "-c",
@@ -224,7 +224,7 @@ def _is_generated(path: Path) -> bool:
 
 def _probe_master_tags(source: Path, *, audio_stream: int) -> MasterTags:
     streams = ffprobe_json(source, "-show_streams").get("streams", [])
-    video = next((stream for stream in streams if stream.get("codec_type") == "video"), None)
+    video = next((stream for stream in streams if _is_video(stream)), None)
     audio_streams = [stream for stream in streams if stream.get("codec_type") == "audio"]
     audio = audio_streams[audio_stream] if audio_stream < len(audio_streams) else None
     if video is None:
@@ -232,6 +232,11 @@ def _probe_master_tags(source: Path, *, audio_stream: int) -> MasterTags:
     if audio is None:
         raise ValueError(f"No audio stream {audio_stream} found in {source}")
     return MasterTags.for_streams(video, audio)
+
+
+def _is_video(stream: dict[str, Any]) -> bool:
+    """A real video stream: cover art also probes as video, flagged as an attached picture."""
+    return stream.get("codec_type") == "video" and not (stream.get("disposition") or {}).get("attached_pic")
 
 
 def _patch_master_playlist(path: Path, tags: MasterTags) -> None:

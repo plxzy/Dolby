@@ -303,6 +303,24 @@ def test_dolby_vision_codec_comes_from_the_configuration_record(tmp_path, source
     assert summary["master_playlist_tags"]["codecs"] == f"{expected},ec-3"
 
 
+def test_cover_art_is_not_taken_for_the_video_stream(tmp_path, source, fake_tools):
+    cover = {
+        "codec_type": "video",
+        "codec_name": "mjpeg",
+        "codec_tag_string": "[0][0][0][0]",
+        "r_frame_rate": "90000/1",
+        "disposition": {"default": 0, "attached_pic": 1},
+    }
+    fake_tools.streams = [cover, DV_VIDEO, ATMOS_EAC3]
+
+    summary = package_hls_from_file(source, tmp_path / "out")
+
+    assert summary["master_playlist_tags"]["codecs"] == "dvh1.05.06,ec-3"
+    assert summary["master_playlist_tags"]["frame_rate"] == "23.976"
+    cmd = fake_tools.ffmpeg_cmd
+    assert cmd[cmd.index("-map") + 1] == "0:V:0"
+
+
 @pytest.mark.requires_ffmpeg
 def test_hlg_clip_is_labelled_hlg(tmp_path, media_clip):
     clip = media_clip(
