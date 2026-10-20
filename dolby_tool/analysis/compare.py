@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from ..common import DV_FOURCCS
 from .inspect import inspect_file
 
 # Score weights — tunable. Higher = more impactful on overall score.
@@ -21,7 +22,7 @@ def _score(spec: dict[str, Any], weights: dict[str, float]) -> dict[str, Any]:
     dv = v["dolby_vision"]
 
     dv_present = bool(dv.get("present"))
-    dv_fourcc_ok = dv_present and v.get("fourcc") in {"dvh1", "dvhe", "dvav", "dva1"}
+    dv_fourcc_ok = dv_present and v.get("fourcc") in DV_FOURCCS
     hdr10_plus = bool(v.get("hdr10_plus"))
     atmos = any(a.get("atmos") is True for a in spec["audio"])
 
@@ -70,7 +71,7 @@ def _summary_row(spec: dict[str, Any]) -> dict[str, Any]:
         "fps": v.get("fps"),
         "video_codec": v.get("codec"),
         "fourcc": v.get("fourcc"),
-        "fourcc_ok": v.get("fourcc") in {"dvh1", "dvhe", "dvav", "dva1"},
+        "fourcc_ok": v.get("fourcc") in DV_FOURCCS,
         "video_bitrate_mbps": v.get("bit_rate_mbps"),
         "dv_profile": dv.get("profile") if dv.get("present") else None,
         "dv_compat": dv.get("compatibility_name") if dv.get("present") else None,
@@ -119,7 +120,7 @@ def compare_files(paths: list[str], weights: dict[str, float] | None = None) -> 
     for p in paths:
         try:
             specs.append(inspect_file(p))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             errors.append({"path": p, "error": str(e)})
 
     effective_weights = dict(WEIGHTS)
@@ -133,7 +134,7 @@ def compare_files(paths: list[str], weights: dict[str, float] | None = None) -> 
 
     if scores:
         best_total = max(s["total"] for s in scores)
-        for i, s in enumerate(scores):
+        for s in scores:
             s["is_best"] = s["total"] == best_total
 
     return {
