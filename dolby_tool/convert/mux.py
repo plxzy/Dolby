@@ -13,12 +13,11 @@ without dec3/colr patching. Treat the patchers as last-resort knobs for
 specific bitstream-mismatch cases, not as a default pipeline step.
 """
 
-import json
-import shutil
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from ..common import ffprobe_json, run_tool, to_int
 
 # Codec families we recognise during stream selection / reporting.
 _TEXT_SUB_CODECS = {"subrip", "ass", "ssa", "mov_text", "webvtt", "text"}
@@ -50,19 +49,7 @@ class ProbeResult:
 
 def probe(source: Path) -> ProbeResult:
     """Run ffprobe and classify streams."""
-    cmd = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-show_streams",
-        "-show_chapters",
-        "-show_format",
-        "-of",
-        "json",
-        str(source),
-    ]
-    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-    raw = json.loads(result.stdout or "{}")
+    raw = ffprobe_json(source, "-show_streams", "-show_chapters", "-show_format")
 
     video: StreamInfo | None = None
     audios: list[StreamInfo] = []
@@ -144,10 +131,7 @@ def _is_non_primary(a: StreamInfo) -> bool:
 
 
 def _channels(a: StreamInfo) -> int:
-    try:
-        return int(a.raw.get("channels") or 0)
-    except TypeError, ValueError:
-        return 0
+    return to_int(a.raw.get("channels")) or 0
 
 
 def _default_audio_index(audios: list[StreamInfo]) -> int:
@@ -190,11 +174,6 @@ def mux(
     MP4 (broken on TV.app, fine on Infuse/VLC). Default: drop them — the
     PGS→VobSub step in `subs_pgs.py` re-adds them in a second pass.
     """
-    if shutil.which("ffmpeg") is None:
-        raise RuntimeError("ffmpeg not found on PATH")
-    if shutil.which("ffprobe") is None:
-        raise RuntimeError("ffprobe not found on PATH")
-
     source = source.expanduser().resolve()
     output = output.expanduser().resolve()
     if not source.is_file():
@@ -209,6 +188,7 @@ def mux(
     cmd: list[str] = [
         "ffmpeg",
         "-hide_banner",
+        "-nostdin",
         "-y" if overwrite else "-n",
         # Tolerate partial/truncated MKVs: drop corrupt frames rather than abort.
         "-fflags",
@@ -218,7 +198,7 @@ def mux(
         "-i",
         str(source),
         "-map",
-        f"0:v:{_video_pos(info)}",
+        f"0:{info.video.index}",
     ]
 
     # All audio tracks, in source order.
@@ -259,14 +239,8 @@ def mux(
         str(output),
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        # Bubble up stderr so callers can see why it failed.
-        raise RuntimeError(
-            f"ffmpeg mux failed (exit {result.returncode}):\n"
-            f"  cmd: {' '.join(cmd)}\n"
-            f"  stderr tail:\n{_tail(result.stderr, 40)}"
-        )
+    # No timeout: a stream copy of a full-length film legitimately takes minutes.
+    result = run_tool(cmd, timeout=None)
 
     return {
         "source": str(source),
@@ -279,17 +253,3 @@ def mux(
         "chapters": info.has_chapters,
         "ffmpeg_stderr_tail": result.stderr.splitlines()[-20:],
     }
-
-
-def _video_pos(info: ProbeResult) -> int:
-    """Position of the chosen video stream within the input's video streams."""
-    video_streams = [s for s in info.raw.get("streams", []) if s.get("codec_type") == "video"]
-    for i, s in enumerate(video_streams):
-        if int(s["index"]) == info.video.index:
-            return i
-    return 0
-
-
-def _tail(text: str, n: int) -> str:
-    lines = text.splitlines()
-    return "\n".join(lines[-n:])

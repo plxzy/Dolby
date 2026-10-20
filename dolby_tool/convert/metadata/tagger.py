@@ -14,11 +14,10 @@ Atom reference:
   iTunEXTC = content rating string (e.g. "mpaa|PG-13|300|")
 """
 
-import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
+from ...common import run_tool, which_any
 from .apple_tv import Metadata
 from .artwork import download
 
@@ -29,20 +28,21 @@ _STIK_MOVIE = "value=9"
 _STIK_TV = "value=10"
 
 
+def _atomicparsley() -> str | None:
+    return which_any("AtomicParsley", "atomicparsley")
+
+
 def have_atomicparsley() -> bool:
-    return shutil.which("AtomicParsley") is not None or shutil.which("atomicparsley") is not None
-
-
-def _bin() -> str:
-    return shutil.which("AtomicParsley") or shutil.which("atomicparsley") or "AtomicParsley"
+    return _atomicparsley() is not None
 
 
 def apply(path: Path, meta: Metadata) -> dict[str, object]:
     """Write metadata onto `path` in place. Returns a summary dict."""
-    if not have_atomicparsley():
+    atomicparsley = _atomicparsley()
+    if atomicparsley is None:
         return {"applied": False, "reason": "AtomicParsley not installed (brew install atomicparsley)"}
 
-    args: list[str] = [_bin(), str(path)]
+    args: list[str] = [atomicparsley, str(path)]
     fields_set: list[str] = []
 
     def add(flag: str, value: str | int | None) -> None:
@@ -101,7 +101,7 @@ def apply(path: Path, meta: Metadata) -> dict[str, object]:
             add("--artwork", str(p))
 
         args += ["--overWrite"]
-        r = subprocess.run(args, capture_output=True, text=True)
+        r = run_tool(args, check=False)
         if r.returncode != 0:
             return {
                 "applied": False,

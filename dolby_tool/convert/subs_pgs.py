@@ -16,12 +16,11 @@ This is the one piece of Subler we don't try to faithfully replicate
 in-process — bdsup2sub already does the palette/timing work well.
 """
 
-import shutil
-import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..common import run_tool, which_any
 from .mux import StreamInfo
 
 
@@ -32,12 +31,12 @@ class PgsConversionResult:
     reason: str | None = None
 
 
+def _bdsup2sub() -> str | None:
+    return which_any("bdsup2sub", "bdsup2sub++")
+
+
 def have_bdsup2sub() -> bool:
-    return shutil.which("bdsup2sub") is not None or shutil.which("bdsup2sub++") is not None
-
-
-def _bdsup2sub_cmd() -> str:
-    return shutil.which("bdsup2sub") or shutil.which("bdsup2sub++") or "bdsup2sub"
+    return _bdsup2sub() is not None
 
 
 def convert_and_remux(
@@ -50,7 +49,8 @@ def convert_and_remux(
     """Convert PGS → VobSub and remux into a new MP4 alongside `target_mp4`."""
     if not pgs_streams:
         return PgsConversionResult(converted=0, skipped=0, reason="no PGS streams")
-    if not have_bdsup2sub():
+    bdsup2sub = _bdsup2sub()
+    if bdsup2sub is None:
         return PgsConversionResult(
             converted=0,
             skipped=len(pgs_streams),
@@ -66,6 +66,7 @@ def convert_and_remux(
             extract_cmd = [
                 "ffmpeg",
                 "-hide_banner",
+                "-nostdin",
                 "-y",
                 "-i",
                 str(source_mkv),
@@ -75,12 +76,11 @@ def convert_and_remux(
                 "copy",
                 str(sup_path),
             ]
-            r = subprocess.run(extract_cmd, capture_output=True, text=True)
+            r = run_tool(extract_cmd, check=False)
             if r.returncode != 0 or not sup_path.exists():
                 continue
             idx_path = tmp / f"sub_{s.index}.idx"
-            convert_cmd = [_bdsup2sub_cmd(), "-o", str(idx_path), str(sup_path)]
-            r = subprocess.run(convert_cmd, capture_output=True, text=True)
+            r = run_tool([bdsup2sub, "-o", str(idx_path), str(sup_path)], check=False)
             sub_path = idx_path.with_suffix(".sub")
             if r.returncode != 0 or not idx_path.exists() or not sub_path.exists():
                 continue
@@ -94,7 +94,7 @@ def convert_and_remux(
         # offset by the count of subtitles already present.
         existing_subs = _count_subtitle_streams(target_mp4)
 
-        cmd: list[str] = ["ffmpeg", "-hide_banner", "-y", "-i", str(target_mp4)]
+        cmd: list[str] = ["ffmpeg", "-hide_banner", "-nostdin", "-y", "-i", str(target_mp4)]
         for idx, _sub, _lang in idx_subs:
             cmd += ["-i", str(idx)]
         cmd += ["-map", "0"]
@@ -103,7 +103,7 @@ def convert_and_remux(
             if lang:
                 cmd += [f"-metadata:s:s:{existing_subs + i - 1}", f"language={lang}"]
         cmd += ["-c", "copy", "-movflags", "+faststart+use_metadata_tags", str(output)]
-        r = subprocess.run(cmd, capture_output=True, text=True)
+        r = run_tool(cmd, check=False)
         if r.returncode != 0:
             return PgsConversionResult(
                 converted=0,
@@ -116,10 +116,9 @@ def convert_and_remux(
 
 def _count_subtitle_streams(mp4: Path) -> int:
     """Return how many subtitle streams already live in `mp4` (0 if probe fails)."""
-    r = subprocess.run(
+    r = run_tool(
         ["ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream=index", "-of", "csv=p=0", str(mp4)],
-        capture_output=True,
-        text=True,
+        check=False,
     )
     if r.returncode != 0:
         return 0
