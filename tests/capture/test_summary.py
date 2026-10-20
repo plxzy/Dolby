@@ -1,6 +1,7 @@
 """Playback summaries: HLS/DV/audio verdicts, renderer evidence and Markdown."""
 
 from dolby_tool.capture import LogCapture, parse_line, summarize_log_lines, tvlog_summary_markdown
+from dolby_tool.capture.summary import SUMMARY_RENDERER_EVENT_LIMIT
 
 
 def test_movpkg_selected_stereo_with_atmos_evidence_gets_verdict():
@@ -498,3 +499,59 @@ def test_capture_quality_notes_likely_missed_audio_init():
     assert playback["capture_quality"]["label"] == "likely missed audio init"
     assert playback["capture_quality"]["likely_missed_audio_init"] is True
     assert "no audio or renderer evidence" in playback["capture_quality"]["note"]
+
+
+# ---------------------------------------------------------------------------
+# Latest state: renderer evidence is listed once per distinct event, but the
+# "current" values must come from the most recent event (A → B → A reports A).
+
+
+def _media_formatinfo(rendering: bool) -> str:
+    return (
+        "play> cm>> mediaFormatinfo '<private>' , audioCapabilities: 0x8 -> 0x1, 0x8 -> 0x1, "
+        "asbdFormatID = qc+3, Dolby Atmos, asbdNumChannels = 16, asbdSampleRate = 48.0 kHz, "
+        f"is {'' if rendering else 'not '}rendering spatial audio"
+    )
+
+
+def _renderer_evidence(*lines: str) -> dict:
+    events = [parse_line(line) for line in lines]
+    assert all(event is not None for event in events)
+    return LogCapture.from_events(events).summarize()["playback"]["renderer_evidence"]
+
+
+def test_app_spatial_rendering_reports_the_latest_state_after_on_off_on():
+    renderer = _renderer_evidence(_media_formatinfo(True), _media_formatinfo(False), _media_formatinfo(True))
+
+    assert renderer["app_spatial_rendering_last_state"] is True
+    assert renderer["verdict"] == "app_spatial_rendering_active"
+    assert [m["rendering_spatial_audio"] for m in renderer["media_formatinfo"]] == [True, False]
+
+
+def test_route_capability_label_describes_the_current_route():
+    renderer = _renderer_evidence(
+        "\tRoute = built-in speakers",
+        "\tRoute = AirPods Pro",
+        "\tRoute = built-in speakers",
+    )
+
+    assert renderer["routes"] == ["built-in speakers", "AirPods Pro"]
+    assert renderer["route_capability_label"] == "built-in speakers"
+
+
+def test_route_spatial_capability_follows_the_latest_binding():
+    renderer = _renderer_evidence(
+        "        maxSpatializableChannels = 16",
+        "        maxSpatializableChannels = 0",
+        "        maxSpatializableChannels = 16",
+    )
+
+    assert renderer["max_spatializable_channels"] == 16
+    assert renderer["route_spatial_capable"] is True
+
+
+def test_latest_state_is_tracked_after_the_evidence_list_is_full():
+    lines = [f"maxSpatializableChannels = {n}" for n in range(SUMMARY_RENDERER_EVENT_LIMIT + 1)]
+    renderer = summarize_log_lines(lines)["playback"]["renderer_evidence"]
+
+    assert renderer["max_spatializable_channels"] == SUMMARY_RENDERER_EVENT_LIMIT

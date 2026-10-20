@@ -39,6 +39,8 @@ class CaptureState:
         self.last_file: Event | None = None
         self.renderer_events: list[Event] = []
         self._renderer_keys: set[tuple[tuple[str, str], ...]] = set()
+        # The de-duplicated list cannot say which value is current (A → B → A lists A, B).
+        self.latest_renderer_hints: dict[str, Event] = {}
         self.spatial_rendering_changed_count = 0
         self.pipeline_engines: list[str] = []
 
@@ -70,7 +72,8 @@ class CaptureState:
         self.observed_audio[key]["count"] += 1
 
     def _add_renderer_hint(self, event: Event) -> None:
-        if event.get("hint") == "spatial_rendering_changed":
+        self.latest_renderer_hints[event["hint"]] = event
+        if event["hint"] == "spatial_rendering_changed":
             self.spatial_rendering_changed_count += 1
         # De-duplicate by content: the same hint repeats with only `raw`/`ts` changing.
         key = tuple(sorted((k, repr(v)) for k, v in event.items() if k not in {"raw", "ts"}))
@@ -161,6 +164,7 @@ def _playback_summary(state: CaptureState, started_at: float | None) -> dict[str
     if state.renderer_events:
         playback["renderer_evidence"] = _renderer_summary(
             state.renderer_events,
+            state.latest_renderer_hints,
             started_at=started_at,
             spatial_rendering_changed_count=state.spatial_rendering_changed_count,
         )
@@ -393,25 +397,30 @@ _TV_APP_SPATIAL_FALSE_NOTE = (
 
 def _renderer_summary(
     events: list[Event],
+    latest: dict[str, Event],
     *,
     started_at: float | None,
     spatial_rendering_changed_count: int,
 ) -> dict[str, Any]:
-    """App-level vs CoreAudio-level spatial rendering evidence, ending in a `verdict`."""
+    """App-level vs CoreAudio-level spatial rendering evidence, ending in a `verdict`.
+
+    `events` is the de-duplicated evidence; `latest` maps each hint to its most
+    recent event and supplies the "current" values.
+    """
     by_hint: dict[str, list[Event]] = {}
     for event in events:
         by_hint.setdefault(event["hint"], []).append(event)
 
     summary: dict[str, Any] = {"observed_hints": sorted(by_hint)}
-    summary |= _route_evidence(by_hint.get("route", []))
-    summary |= _app_spatial_evidence(by_hint.get("media_formatinfo", []), started_at)
+    summary |= _route_evidence(by_hint.get("route", []), latest.get("route"))
+    summary |= _app_spatial_evidence(by_hint.get("media_formatinfo", []), latest.get("media_formatinfo"), started_at)
     summary |= _spatial_power_evidence(by_hint.get("spatial_power", []), by_hint.get("head_tracking_preference", []))
     summary |= _atmos_decoder_evidence(by_hint.get("atmos_decoder_state", []), by_hint.get("atmos_decoder_subtype", []))
     summary |= _mixer_evidence(by_hint.get("mixer_spatial_status", []))
     summary |= _auspatial_evidence(by_hint)
     if masks := _distinct_values(by_hint.get("allowed_spatialization_formats_mask", []), "mask"):
         summary["allowed_spatialization_formats_masks"] = masks
-    summary |= _spatial_binding_evidence(by_hint)
+    summary |= _spatial_binding_evidence(by_hint, latest.get("max_spatializable_channels"))
     if immersive := by_hint.get("immersive_rendering_requested"):
         summary["immersive_rendering_requested"] = any(
             e.get("immersive_rendering_requested") is True for e in immersive
@@ -422,21 +431,23 @@ def _renderer_summary(
     return summary
 
 
-def _route_evidence(route_events: list[Event]) -> dict[str, Any]:
+def _route_evidence(route_events: list[Event], latest: Event | None) -> dict[str, Any]:
     routes = _distinct_values(route_events, "route")
     if not routes:
         return {}
-    return {"routes": routes, "route_capability_label": _route_capability_label(routes[-1])}
+    current = (latest or {}).get("route") or routes[-1]
+    return {"routes": routes, "route_capability_label": _route_capability_label(current)}
 
 
-def _app_spatial_evidence(media_events: list[Event], started_at: float | None) -> dict[str, Any]:
+def _app_spatial_evidence(media_events: list[Event], latest: Event | None, started_at: float | None) -> dict[str, Any]:
     """TV.app's own `mediaFormatinfo … is [not] rendering spatial audio` reports."""
     if not media_events:
         return {}
-    states = [e["rendering_spatial_audio"] for e in media_events if e.get("rendering_spatial_audio") is not None]
+    last_state = (latest or {}).get("rendering_spatial_audio")
     evidence: dict[str, Any] = {
-        "app_spatial_rendering_ever_true": any(states),
-        "app_spatial_rendering_last_state": states[-1] if states else None,
+        "app_spatial_rendering_ever_true": last_state is True
+        or any(e.get("rendering_spatial_audio") is True for e in media_events),
+        "app_spatial_rendering_last_state": last_state,
     }
     if started_at is not None:
         first_true = next(
@@ -507,7 +518,7 @@ def _auspatial_evidence(by_hint: dict[str, list[Event]]) -> dict[str, Any]:
     return evidence
 
 
-def _spatial_binding_evidence(by_hint: dict[str, list[Event]]) -> dict[str, Any]:
+def _spatial_binding_evidence(by_hint: dict[str, list[Event]], latest_capability: Event | None) -> dict[str, Any]:
     """SpatializationManager's per-binding block: is the route spatial-capable, and for which source?
 
     On a non-capable route (e.g. a wired headset) it reports maxSpatializableChannels = 0
@@ -515,14 +526,9 @@ def _spatial_binding_evidence(by_hint: dict[str, list[Event]]) -> dict[str, Any]
     allowed-formats mask correctly.
     """
     evidence: dict[str, Any] = {}
-    channels = [
-        e["max_spatializable_channels"]
-        for e in by_hint.get("max_spatializable_channels", [])
-        if e.get("max_spatializable_channels") is not None
-    ]
-    if channels:
-        evidence["max_spatializable_channels"] = channels[-1]
-        evidence["route_spatial_capable"] = channels[-1] > 0
+    if (channels := (latest_capability or {}).get("max_spatializable_channels")) is not None:
+        evidence["max_spatializable_channels"] = channels
+        evidence["route_spatial_capable"] = channels > 0
     if source_events := by_hint.get("spatial_audio_sources"):
         sources = unique(s for e in source_events for s in e.get("spatial_audio_sources") or [] if s)
         evidence["spatial_audio_sources"] = sources
