@@ -35,7 +35,7 @@ def inspect_file(path: str) -> MediaSpec:
     fmt = probe.get("format") or {}
     streams = probe.get("streams") or []
 
-    video_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
+    video_stream = _primary_video_stream(streams)
     if video_stream is None:
         raise InspectError("no video stream found")
 
@@ -60,10 +60,10 @@ def _ffprobe_streams(path: str) -> Raw:
         raise InspectError(str(e)) from e
 
 
-def _first_frame_side_data(path: str) -> list[Raw]:
-    """Side data of the first decoded video frame; best-effort, empty when the probe fails."""
+def _first_frame_side_data(path: str, stream_index: int) -> list[Raw]:
+    """Side data of the first decoded frame of one stream; best-effort, empty when the probe fails."""
     try:
-        first = ffprobe_json(path, "-select_streams", "v:0", "-show_frames", "-read_intervals", "%+#1")
+        first = ffprobe_json(path, "-select_streams", str(stream_index), "-show_frames", "-read_intervals", "%+#1")
     except ToolError:
         return []
     return (first.get("frames") or [{}])[0].get("side_data_list") or []
@@ -84,6 +84,14 @@ def _mediainfo_audio_tracks(path: str) -> list[Raw]:
 # per-section builders
 
 
+def _primary_video_stream(streams: list[Raw]) -> Raw | None:
+    """The first real video stream: cover art (an attached picture) is not the video."""
+    return next(
+        (s for s in streams if s.get("codec_type") == "video" and not (s.get("disposition") or {}).get("attached_pic")),
+        None,
+    )
+
+
 def _container(fmt: Raw, video_stream: Raw) -> Container:
     # The video stream's own duration wins: the container's can include trailing audio.
     duration = to_float(video_stream.get("duration")) or to_float(fmt.get("duration"))
@@ -101,7 +109,7 @@ def _container(fmt: Raw, video_stream: Raw) -> Container:
 
 def _video_spec(path: str, stream: Raw, fmt: Raw) -> VideoSpec:
     stream_side = stream.get("side_data_list") or []
-    frame_side = _first_frame_side_data(path)
+    frame_side = _first_frame_side_data(path, stream["index"])
     fourcc = (stream.get("codec_tag_string") or "").strip().lower()
     dolby_vision = _dolby_vision(stream_side + frame_side)
     bit_rate = to_int(stream.get("bit_rate")) or to_int(fmt.get("bit_rate"))
