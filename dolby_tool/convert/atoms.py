@@ -12,10 +12,13 @@ Scope is deliberately narrow — two atoms only:
     to `nclx` (that requires growing the box by one byte and rewriting
     chunk offsets — out of scope). Caller must supply the right codes;
     writing BT.709/SDR values into an HDR/DV file is destructive.
-  * `dec3` (EAC-3 sample entry config) → OR the low bit of the last payload
-    byte. EXPERIMENTAL: does not parse the substream / dependent-substream
-    layout, so on plain E-AC-3 5.1 this writes a JOC claim that is not true.
-    Gated behind `--experimental-force-dec3-joc` in the CLI.
+  * `dec3` (EAC-3 sample entry config) → parse the ETSI TS 102 366 Annex F
+    layout and, only when the box already holds the two optional extension
+    bytes, set `flag_ec3_extension_type_a` (JOC) in place. Tracks with
+    dependent substreams or a non-standard layout (ffmpeg writes a 6-byte
+    payload for plain E-AC-3) are left alone and the reason is reported.
+    EXPERIMENTAL: the flag is a claim about the bitstream, so it can lie when
+    the source is not Atmos. Gated behind `--experimental-force-dec3-joc`.
 
 iTunes-style userdata tags (`©nam`, `desc`, `covr`, `iTunEXTC`, `stik`, TV
 atoms etc.) are written by `tagger.py` using AtomicParsley, which handles
@@ -27,47 +30,28 @@ adding them safely requires a full moov rewrite (TODO).
 """
 
 import struct
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO
 
 # Container boxes — children are themselves boxes (recurse into them).
-_CONTAINERS = {
-    b"moov",
-    b"trak",
-    b"mdia",
-    b"minf",
-    b"stbl",
-    b"udta",
-    b"edts",
-    b"mvex",
-    b"moof",
-    b"traf",
-    b"mfra",
-}
+_CONTAINERS = frozenset(
+    {b"moov", b"trak", b"mdia", b"minf", b"stbl", b"udta", b"edts", b"mvex", b"moof", b"traf", b"mfra"}
+)
 
-# Sample-entry containers (under stsd) whose payload starts with a fixed
-# header then nested child boxes. We recurse into their children at offset 8.
-_SAMPLE_ENTRY_CODECS = {
-    # video
-    b"avc1",
-    b"avc3",
-    b"hvc1",
-    b"hev1",
-    b"hev2",
-    b"dvh1",
-    b"dvhe",
-    b"dva1",
-    b"dvav",
-    # audio
-    b"mp4a",
-    b"ac-3",
-    b"ec-3",
-    b"ac-4",
-    b"alac",
-    b"opus",
-}
-_SAMPLE_ENTRY_HEADER_LEN = {"video": 78, "audio": 28}  # bytes after the box header
+# Sample entries (under stsd) whose payload is a fixed header followed by child
+# boxes such as `colr`, `dvcC` or `dec3`.
+_VIDEO_SAMPLE_ENTRIES = frozenset({b"avc1", b"avc3", b"hvc1", b"hev1", b"hev2", b"dvh1", b"dvhe", b"dva1", b"dvav"})
+_AUDIO_SAMPLE_ENTRIES = frozenset({b"mp4a", b"ac-3", b"ec-3", b"ac-4", b"alac", b"opus"})
+_VIDEO_ENTRY_HEADER_LEN = 78  # bytes between the box header and the first child
+# Bytes between the box header and the first child of a sound sample entry,
+# by the entry's version field (v1 adds 16 bytes of QuickTime fields, v2 36).
+_AUDIO_ENTRY_HEADER_LEN = {0: 28, 1: 44, 2: 64}
+
+_NCLX_PAYLOAD_LEN = 11  # colour_type (4) + primaries, transfer, matrix (2 each) + range flags (1)
+
+_STSD_PATH = (b"mdia", b"minf", b"stbl", b"stsd")
 
 
 @dataclass
@@ -77,8 +61,8 @@ class Box:
     header_size: int  # 8 (or 16 if largesize)
     size: int  # total box size including header
     payload_offset: int = 0  # offset where children/payload starts
-    parent: Box | None = None
-    children: list[Box] = field(default_factory=list)
+    parent: Box | None = field(default=None, repr=False, compare=False)
+    children: list[Box] = field(default_factory=list, repr=False)
 
     @property
     def end(self) -> int:
@@ -89,6 +73,7 @@ class Box:
         return self.end - self.payload_offset
 
     def find(self, type_path: bytes | tuple[bytes, ...]) -> Box | None:
+        """Follow a path of child types (first match at each level)."""
         if isinstance(type_path, bytes):
             type_path = (type_path,)
         node: Box | None = self
@@ -103,7 +88,11 @@ class Box:
 
 
 def parse(f: BinaryIO) -> list[Box]:
-    """Parse the top-level box list. Children of containers are walked lazily by `walk_containers`."""
+    """Parse the whole file into a box tree and return the top-level boxes.
+
+    Containers, `stsd`, `meta` and known sample entries are descended into
+    eagerly; every other box is a leaf whose payload is left on disk.
+    """
     f.seek(0, 2)
     size = f.tell()
     f.seek(0)
@@ -123,6 +112,8 @@ def _parse_range(f: BinaryIO, start: int, end: int, *, parent: Box | None) -> li
         header_size = 8
         if size == 1:
             largesize_bytes = f.read(8)
+            if len(largesize_bytes) < 8:
+                break  # truncated 64-bit size field
             size = struct.unpack(">Q", largesize_bytes)[0]
             header_size = 16
         elif size == 0:
@@ -137,29 +128,40 @@ def _parse_range(f: BinaryIO, start: int, end: int, *, parent: Box | None) -> li
             payload_offset=pos + header_size,
             parent=parent,
         )
-        if type_ in _CONTAINERS:
-            box.children = _parse_range(f, box.payload_offset, box.end, parent=box)
-        elif type_ == b"stsd":
-            # stsd: 1 byte version + 3 bytes flags + 4 bytes entry_count, then sample entries
-            box.children = _parse_range(f, box.payload_offset + 8, box.end, parent=box)
-        elif type_ == b"meta":
-            # meta is full-box: 4 bytes version/flags, then children
-            box.children = _parse_range(f, box.payload_offset + 4, box.end, parent=box)
-        elif type_ in _SAMPLE_ENTRY_CODECS:
-            # Determine header length by whether parent's parent's parent's media handler is video/audio.
-            kind = _sample_entry_kind(type_)
-            inner_start = box.payload_offset + _SAMPLE_ENTRY_HEADER_LEN.get(kind, 0)
-            if inner_start < box.end:
-                box.children = _parse_range(f, inner_start, box.end, parent=box)
+        box.children = _parse_children(f, box)
         boxes.append(box)
         pos += size
     return boxes
 
 
-def _sample_entry_kind(type_: bytes) -> str:
-    if type_ in (b"avc1", b"avc3", b"hvc1", b"hev1", b"hev2", b"dvh1", b"dvhe", b"dva1", b"dvav"):
-        return "video"
-    return "audio"
+def _parse_children(f: BinaryIO, box: Box) -> list[Box]:
+    if box.type in _CONTAINERS:
+        start = box.payload_offset
+    elif box.type == b"stsd":
+        # stsd: 1 byte version + 3 bytes flags + 4 bytes entry_count, then sample entries
+        start = box.payload_offset + 8
+    elif box.type == b"meta":
+        # meta is full-box: 4 bytes version/flags, then children
+        start = box.payload_offset + 4
+    elif box.type in _VIDEO_SAMPLE_ENTRIES:
+        start = box.payload_offset + _VIDEO_ENTRY_HEADER_LEN
+    elif box.type in _AUDIO_SAMPLE_ENTRIES:
+        header_len = _audio_entry_header_len(f, box)
+        if header_len is None:
+            return []
+        start = box.payload_offset + header_len
+    else:
+        return []
+    return _parse_range(f, start, box.end, parent=box) if start < box.end else []
+
+
+def _audio_entry_header_len(f: BinaryIO, box: Box) -> int | None:
+    """Fixed-header length of a sound sample entry, or None if it's too short or an unknown version."""
+    f.seek(box.payload_offset + 8)
+    version = f.read(2)
+    if len(version) < 2:
+        return None
+    return _AUDIO_ENTRY_HEADER_LEN.get(struct.unpack(">H", version)[0])
 
 
 def find_path(boxes: list[Box], path: tuple[bytes, ...]) -> Box | None:
@@ -168,172 +170,152 @@ def find_path(boxes: list[Box], path: tuple[bytes, ...]) -> Box | None:
         return None
     head, *rest = path
     node = next((b for b in boxes if b.type == head), None)
-    for t in rest:
-        if node is None:
-            return None
-        node = next((c for c in node.children if c.type == t), None)
-    return node
+    return node.find(tuple(rest)) if node is not None else None
 
 
 # --------------------------------------------------------------------- colr
 
 
 def patch_colr_nclx(path: Path, primaries: int, transfer: int, matrix: int, full_range: bool) -> bool:
-    """Walk every video sample entry's `colr` child and ensure it's the `nclx` variant.
+    """Overwrite the `nclx` colour codes of every video sample entry in place.
 
-    Returns True if any patch was applied. Same-size in-place when source is
-    already `nclx` (overwrite payload); when source is `nclc` (10-byte payload
-    vs nclx's 11 bytes), we cannot patch in place — log and skip (caller can
-    decide to ffmpeg-remux with explicit `-color_*` flags).
+    Returns True if any patch was applied. Only `nclx` boxes are rewritten: a
+    legacy `nclc` payload is one byte shorter than `nclx`, so it can't be
+    patched in place and is skipped (remux with explicit `-color_*` flags
+    instead). An entry may carry several `colr` boxes (e.g. `prof` and `nclx`);
+    each one is checked.
     """
     changed = False
     with open(path, "r+b") as f:
-        top = parse(f)
-        for trak in _iter_video_traks(top):
-            stsd = trak.find((b"mdia", b"minf", b"stbl", b"stsd"))
-            if not stsd:
+        for entry in _sample_entries(f, parse(f), b"vide"):
+            if entry.type not in _VIDEO_SAMPLE_ENTRIES:
                 continue
-            for entry in stsd.children:
-                if entry.type not in {b"avc1", b"avc3", b"hvc1", b"hev1", b"hev2", b"dvh1", b"dvhe", b"dva1", b"dvav"}:
-                    continue
-                colr = next((c for c in entry.children if c.type == b"colr"), None)
-                if colr is None:
+            for colr in entry.find_all(b"colr"):
+                if colr.payload_size < _NCLX_PAYLOAD_LEN:
                     continue
                 f.seek(colr.payload_offset)
-                sub_type = f.read(4)
-                if sub_type == b"nclx":
-                    payload = struct.pack(">HHHB", primaries, transfer, matrix, 0x80 if full_range else 0x00)
-                    f.seek(colr.payload_offset + 4)
-                    f.write(payload)
+                if f.read(4) == b"nclx":
+                    f.write(struct.pack(">HHHB", primaries, transfer, matrix, 0x80 if full_range else 0x00))
                     changed = True
-                # nclc → nclx requires a 1-byte grow; skip in place.
     return changed
 
 
 # --------------------------------------------------------------------- dec3 JOC
 
 
-def patch_dec3_joc(path: Path, *, joc_complexity_index: int = 16) -> bool:
-    """Set the `flag_ec3_extension_type_a` (JOC) bit in every EAC-3 track's `dec3` box.
+@dataclass(frozen=True)
+class Dec3Layout:
+    """The parts of an `EC3SpecificBox` payload (ETSI TS 102 366 Annex F) that locate the JOC flag."""
 
-    Per ETSI TS 102 366 Annex F: after the per-substream config bytes, a
-    trailing byte carries `flag_ec3_extension_type_a` (top bit). We OR it in
-    and append a complexity-index byte if missing.
+    data_rate: int  # kbit/s
+    dependent_substreams: tuple[int, ...]  # num_dep_sub of each independent substream
+    base_size: int  # bytes before the optional extension
+    payload_size: int
 
-    Returns True if any patch happened. Best-effort: if the box is already
-    longer than the minimum size we treat the JOC byte as present.
+    @property
+    def has_extension(self) -> bool:
+        """True when exactly the two spec extension bytes follow the substream config."""
+        return self.payload_size == self.base_size + 2
+
+
+def parse_dec3(payload: bytes) -> Dec3Layout | None:
+    """Parse a `dec3` payload, or return None when it is too short for its own substream count."""
+    if len(payload) < 2:
+        return None
+    header = struct.unpack(">H", payload[:2])[0]
+    data_rate, independent = header >> 3, (header & 0x7) + 1
+    pos = 2
+    dependent: list[int] = []
+    for _ in range(independent):
+        if pos + 3 > len(payload):
+            return None
+        num_dep_sub = (payload[pos + 2] >> 1) & 0xF
+        dependent.append(num_dep_sub)
+        pos += 4 if num_dep_sub else 3  # chan_loc takes a bit more room than the reserved bit
+    if pos > len(payload):
+        return None
+    return Dec3Layout(data_rate, tuple(dependent), pos, len(payload))
+
+
+@dataclass(frozen=True)
+class Dec3Result:
+    """What `patch_dec3_joc` did to one E-AC-3 track (0-based among the file's E-AC-3 tracks)."""
+
+    track: int
+    patched: bool
+    reason: str
+
+
+def patch_dec3_joc(path: Path, *, joc_complexity_index: int = 16) -> list[Dec3Result]:
+    """Set `flag_ec3_extension_type_a` (JOC) in every E-AC-3 track's `dec3` box, where it fits.
+
+    The payload is parsed first. Only a box that already ends in the two
+    extension bytes (reserved(7) + flag(1), complexity_index(8)) is patched,
+    in place: the flag is set and a zero complexity index becomes
+    `joc_complexity_index`. Growing a box would need a moov rewrite, so a box
+    without extension bytes, with a non-standard length (ffmpeg appends a
+    stray byte for plain E-AC-3) or with dependent substreams is refused.
+    One result per E-AC-3 track says what happened and why.
     """
-    changed = False
+    results: list[Dec3Result] = []
     with open(path, "r+b") as f:
-        top = parse(f)
-        for trak in _iter_audio_traks(top, codec_filter=b"ec-3"):
-            stsd = trak.find((b"mdia", b"minf", b"stbl", b"stsd"))
-            if not stsd:
+        for entry in _sample_entries(f, parse(f), b"soun"):
+            if entry.type != b"ec-3":
                 continue
-            for entry in stsd.children:
-                if entry.type != b"ec-3":
-                    continue
-                dec3 = next((c for c in entry.children if c.type == b"dec3"), None)
-                if dec3 is None:
-                    continue
-                f.seek(dec3.payload_offset)
-                payload = f.read(dec3.payload_size)
-                if not payload:
-                    continue
-                # We can only safely set the JOC bit if the box already
-                # reserves a byte for it (size matches the JOC layout).
-                # Otherwise resizing the box would need a moov rewrite.
-                expected_min = 2  # data_rate + num_ind_sub bits
-                if len(payload) <= expected_min:
-                    continue
-                last = payload[-1]
-                new_last = last | 0x01  # flag_ec3_extension_type_a low bit per Annex F bitstream
-                if new_last != last:
-                    f.seek(dec3.payload_offset + len(payload) - 1)
-                    f.write(bytes([new_last]))
-                    changed = True
-                _ = joc_complexity_index  # would go in a trailing byte if we extended the box
-    return changed
+            track = len(results)
+            dec3 = entry.find(b"dec3")
+            if dec3 is None:
+                results.append(Dec3Result(track, False, "no dec3 box"))
+                continue
+            f.seek(dec3.payload_offset)
+            payload = f.read(dec3.payload_size)
+            results.append(_patch_dec3_payload(f, dec3, payload, track, joc_complexity_index))
+    return results
+
+
+def _patch_dec3_payload(f: BinaryIO, dec3: Box, payload: bytes, track: int, complexity_index: int) -> Dec3Result:
+    layout = parse_dec3(payload)
+    if layout is None:
+        return Dec3Result(track, False, "malformed dec3 payload")
+    if any(layout.dependent_substreams):
+        return Dec3Result(track, False, f"dependent substreams {layout.dependent_substreams} are not supported")
+    if layout.payload_size == layout.base_size:
+        return Dec3Result(track, False, "no in-place room: dec3 has no extension bytes")
+    if not layout.has_extension:
+        return Dec3Result(
+            track,
+            False,
+            f"no in-place room: non-standard dec3 length {layout.payload_size} (expected {layout.base_size + 2})",
+        )
+    flag, complexity = payload[layout.base_size] | 0x01, payload[layout.base_size + 1] or complexity_index
+    if (flag, complexity) == tuple(payload[layout.base_size :]):
+        return Dec3Result(track, False, f"already signals JOC (complexity index {complexity})")
+    f.seek(dec3.payload_offset + layout.base_size)
+    f.write(bytes([flag, complexity]))
+    return Dec3Result(track, True, f"set JOC flag, complexity index {complexity}")
 
 
 # --------------------------------------------------------------------- helpers
 
 
-def _iter_video_traks(top: list[Box]):
-    moov = next((b for b in top if b.type == b"moov"), None)
-    if not moov:
+def _iter_traks(f: BinaryIO, top: list[Box], handler: bytes) -> Iterator[Box]:
+    """Yield every `trak` whose media handler type (`vide`, `soun`, …) is `handler`."""
+    moov = find_path(top, (b"moov",))
+    if moov is None:
         return
     for trak in moov.find_all(b"trak"):
         hdlr = trak.find((b"mdia", b"hdlr"))
-        if not hdlr:
+        if hdlr is None or hdlr.payload_size < 12:
             continue
-        # hdlr: 4 bytes full-box header + 4 reserved + 4 handler type
-        with open(_path_of(top), "rb") as f:
-            f.seek(hdlr.payload_offset + 8)
-            handler = f.read(4)
-        if handler == b"vide":
+        # hdlr: 4 bytes full-box header + 4 pre_defined, then the handler type
+        f.seek(hdlr.payload_offset + 8)
+        if f.read(4) == handler:
             yield trak
 
 
-def _iter_audio_traks(top: list[Box], codec_filter: bytes | None = None):
-    moov = next((b for b in top if b.type == b"moov"), None)
-    if not moov:
-        return
-    for trak in moov.find_all(b"trak"):
-        hdlr = trak.find((b"mdia", b"hdlr"))
-        if not hdlr:
-            continue
-        with open(_path_of(top), "rb") as f:
-            f.seek(hdlr.payload_offset + 8)
-            handler = f.read(4)
-        if handler != b"soun":
-            continue
-        if codec_filter:
-            stsd = trak.find((b"mdia", b"minf", b"stbl", b"stsd"))
-            if not stsd or not any(c.type == codec_filter for c in stsd.children):
-                continue
-        yield trak
-
-
-# We need the file path to seek into; carry it via a sentinel root-box "_path".
-# Simpler: callers do the file IO directly. The two patch_* entry points above
-# already do their own open(). The handler-type lookups above assume the file
-# is the same one being patched — keep a module-level current path.
-_CURRENT_PATH: Path | None = None
-
-
-def _path_of(_top: list[Box]) -> Path:
-    if _CURRENT_PATH is None:
-        raise RuntimeError("Internal: patch_* did not set _CURRENT_PATH")
-    return _CURRENT_PATH
-
-
-def _with_path(path: Path):
-    """Context-manager-ish helper so iterators can re-open the same file."""
-
-    class _CM:
-        def __enter__(self_inner):
-            global _CURRENT_PATH
-            _CURRENT_PATH = path
-            return self_inner
-
-        def __exit__(self_inner, *exc):
-            global _CURRENT_PATH
-            _CURRENT_PATH = None
-
-    return _CM()
-
-
-# Re-wrap public entry points so _path_of works.
-_patch_colr_nclx_impl = patch_colr_nclx
-_patch_dec3_joc_impl = patch_dec3_joc
-
-
-def patch_colr_nclx(path: Path, primaries: int, transfer: int, matrix: int, full_range: bool) -> bool:  # type: ignore[no-redef]
-    with _with_path(path):
-        return _patch_colr_nclx_impl(path, primaries, transfer, matrix, full_range)
-
-
-def patch_dec3_joc(path: Path, *, joc_complexity_index: int = 16) -> bool:  # type: ignore[no-redef]
-    with _with_path(path):
-        return _patch_dec3_joc_impl(path, joc_complexity_index=joc_complexity_index)
+def _sample_entries(f: BinaryIO, top: list[Box], handler: bytes) -> Iterator[Box]:
+    """Yield the `stsd` sample entries of every track with the given handler type."""
+    for trak in _iter_traks(f, top, handler):
+        stsd = trak.find(_STSD_PATH)
+        if stsd is not None:
+            yield from stsd.children
