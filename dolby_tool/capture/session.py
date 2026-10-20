@@ -11,6 +11,7 @@ Each event is a dict with `kind`, `raw`, `ts` plus the fields parsed by `parser`
 """
 
 import asyncio
+import contextlib
 import logging
 import signal
 import subprocess
@@ -30,6 +31,8 @@ logger = logging.getLogger(__name__)
 # How long `log stream` gets to exit after SIGINT before it is killed, and how long
 # stop() then waits for the reader thread to drain the pipe.
 STOP_TIMEOUT_S = 2.0
+
+SUBSCRIBER_QUEUE_SIZE = 1000
 
 
 def log_stream_command(predicate: str) -> list[str]:
@@ -61,7 +64,7 @@ class LogCapture:
         self._started_at: float | None = None  # wall clock, reported in the summary
         self._started_clock: float | None = None  # monotonic, for duration_s
         self._stopped_clock: float | None = None
-        self._listeners: list[asyncio.Queue] = []
+        self._listeners: list[asyncio.Queue[Event]] = []
         self._loop: asyncio.AbstractEventLoop | None = None
 
     @classmethod
@@ -128,14 +131,15 @@ class LogCapture:
 
     # -- subscription ------------------------------------------------------
 
-    def subscribe(self) -> asyncio.Queue:
-        q: asyncio.Queue = asyncio.Queue(maxsize=1000)
-        self._listeners.append(q)
-        return q
+    def subscribe(self) -> asyncio.Queue[Event]:
+        """A queue that receives every event parsed from now on (bounded; a slow reader misses some)."""
+        queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_SIZE)
+        self._listeners.append(queue)
+        return queue
 
-    def unsubscribe(self, q: asyncio.Queue) -> None:
-        if q in self._listeners:
-            self._listeners.remove(q)
+    def unsubscribe(self, queue: asyncio.Queue[Event]) -> None:
+        if queue in self._listeners:
+            self._listeners.remove(queue)
 
     # -- reader thread -----------------------------------------------------
 
@@ -160,13 +164,17 @@ class LogCapture:
             self._state.add(event)
 
     def _broadcast(self, event: Event) -> None:
-        loop = self._loop
-        for q in list(self._listeners):
-            if loop and loop.is_running():
-                try:
-                    loop.call_soon_threadsafe(q.put_nowait, event)
-                except RuntimeError, asyncio.QueueFull:
-                    pass
+        """Reader thread → event loop: asyncio queues may only be touched on their loop."""
+        if self._loop is None or not self._listeners:
+            return
+        with contextlib.suppress(RuntimeError):  # the loop has already been closed
+            self._loop.call_soon_threadsafe(self._deliver, event)
+
+    def _deliver(self, event: Event) -> None:
+        for queue in tuple(self._listeners):
+            # A subscriber that falls behind misses live events; the summary still has them.
+            with contextlib.suppress(asyncio.QueueFull):
+                queue.put_nowait(event)
 
     # -- summary -----------------------------------------------------------
 

@@ -159,6 +159,30 @@ def test_events_reach_subscribers_on_the_running_loop():
     assert summary["playback"]["dolby_vision_active"] is True
 
 
+def test_a_full_subscriber_queue_drops_live_events_without_loop_errors():
+    def stop_when_counted(capture: LogCapture) -> dict:
+        _wait_until(lambda: _event_count(capture) == len(LINES))
+        return capture.stop()
+
+    async def scenario():
+        loop_errors: list[dict] = []
+        asyncio.get_running_loop().set_exception_handler(lambda _loop, context: loop_errors.append(context))
+        capture = LogCapture(command=_printing(*LINES))
+        queue = capture.subscribe()
+        for _ in range(queue.maxsize - 1):  # a subscriber that stopped reading: one free slot left
+            queue.put_nowait({})
+        capture.start()
+        summary = await asyncio.to_thread(stop_when_counted, capture)
+        await asyncio.sleep(0.05)  # let any pending deliveries run
+        return queue, summary, loop_errors
+
+    queue, summary, loop_errors = asyncio.run(scenario())
+
+    assert loop_errors == []
+    assert queue.full()
+    assert summary["event_count"] == len(LINES)
+
+
 def test_sync_start_summarizes_without_broadcasting():
     capture = LogCapture(command=_printing(*LINES))
     queue = capture.subscribe()
