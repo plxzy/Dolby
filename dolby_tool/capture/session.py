@@ -1,10 +1,12 @@
 """Live capture: run macOS `log stream` and fold its output into a playback summary.
 
-    capture = LogCapture()
-    capture.start()              # spawns `log stream` and a reader thread
-    queue = capture.subscribe()  # parsed events, delivered on the asyncio loop given to start()
-    summary = capture.stop()     # collapses the running totals into a structured summary
+    with LogCapture() as capture:    # spawns `log stream` and a reader thread
+        queue = capture.subscribe()  # parsed events, delivered on the asyncio loop
+        ...
+    summary = capture.stop()         # the structured summary of the finished capture
 
+When `start()` is called from async code, events are broadcast to subscribers on the
+running loop (or pass `loop=` explicitly); from sync code they are only summarized.
 Each event is a dict with `kind`, `raw`, `ts` plus the fields parsed by `parser`.
 """
 
@@ -13,19 +15,33 @@ import signal
 import subprocess
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+from pathlib import Path
 from typing import Any, Self
 
+from ..common import ToolError
 from .parser import Event, parse_line
 from .predicates import PREDICATE
 from .summary import CaptureState, build_summary
 
 
-class LogCapture:
-    """Spawns `log stream` and accumulates parsed events until stopped."""
+def log_stream_command(predicate: str) -> list[str]:
+    """argv for `log stream` in the compact style `parse_line` understands."""
+    return ["log", "stream", "--info", "--debug", "--style", "compact", "--predicate", predicate]
 
-    def __init__(self, predicate: str = PREDICATE, *, raw_event_limit: int = 5000) -> None:
+
+class LogCapture:
+    """Runs `log stream` (or any line-printing `command`) and folds its output into a summary."""
+
+    def __init__(
+        self,
+        predicate: str = PREDICATE,
+        *,
+        command: Sequence[str] | None = None,
+        raw_event_limit: int = 5000,
+    ) -> None:
         self.predicate = predicate
+        self.command = list(command) if command is not None else log_stream_command(predicate)
         self._state = CaptureState(raw_event_limit)
         self._proc: subprocess.Popen | None = None
         self._reader: threading.Thread | None = None
@@ -45,26 +61,26 @@ class LogCapture:
     # -- lifecycle ---------------------------------------------------------
 
     def start(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
+        """Spawn the command and start reading its output; a no-op while running.
+
+        Subscribers are fed on `loop`, by default the running loop when called from
+        async code. Raises `ToolError` when the command cannot be started.
+        """
         if self._proc is not None:
             return
-        self._loop = loop
+        try:
+            self._proc = subprocess.Popen(
+                self.command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except OSError as e:
+            name = Path(self.command[0]).name
+            raise ToolError(f"could not start {name}: {e.strerror or e}", cmd=self.command) from e
+        self._loop = loop or _running_loop()
         self._started_at = time.time()
-        self._proc = subprocess.Popen(
-            [
-                "log",
-                "stream",
-                "--info",
-                "--debug",
-                "--style",
-                "compact",
-                "--predicate",
-                self.predicate,
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
 
@@ -82,6 +98,13 @@ class LogCapture:
         self._proc = None
         self._reader = None
         return self.summarize()
+
+    def __enter__(self) -> Self:
+        self.start()
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.stop()
 
     # -- subscription ------------------------------------------------------
 
@@ -131,3 +154,10 @@ class LogCapture:
             started_at=self._started_at,
             duration_s=time.time() - self._started_at if self._started_at else 0,
         )
+
+
+def _running_loop() -> asyncio.AbstractEventLoop | None:
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:  # called from sync code
+        return None
