@@ -45,6 +45,7 @@ class CaptureState:
         self.pipeline_engines: list[str] = []
 
     def add(self, event: Event) -> None:
+        """Fold one parsed event into the totals."""
         self.event_count += 1
         self.events.append(event)
         engine = event.get("pipeline_engine")
@@ -436,6 +437,7 @@ def _route_evidence(route_events: list[Event], latest: Event | None) -> dict[str
     routes = _distinct_values(route_events, "route")
     if not routes:
         return {}
+    # Label the route in use now; `routes` lists each route once, in first-seen order.
     current = (latest or {}).get("route") or routes[-1]
     return {"routes": routes, "route_capability_label": _route_capability_label(current)}
 
@@ -445,9 +447,9 @@ def _app_spatial_evidence(media_events: list[Event], latest: Event | None, start
     if not media_events:
         return {}
     last_state = (latest or {}).get("rendering_spatial_audio")
+    ever_true = last_state is True or any(e.get("rendering_spatial_audio") is True for e in media_events)
     evidence: dict[str, Any] = {
-        "app_spatial_rendering_ever_true": last_state is True
-        or any(e.get("rendering_spatial_audio") is True for e in media_events),
+        "app_spatial_rendering_ever_true": ever_true,
         "app_spatial_rendering_last_state": last_state,
     }
     if started_at is not None:
