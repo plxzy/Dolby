@@ -1,7 +1,7 @@
 """ffprobe wrapper that produces a clean spec dict for a video file.
 
 We run two ffprobe passes:
-1. -show_format -show_streams -show_chapters → container + per-stream info, including DOVI
+1. -show_format -show_streams → container + per-stream info, including DOVI
    side-data on the video stream.
 2. -show_frames -read_intervals "%+#1" on the video stream → frame-level side data, which
    is where HDR10 mastering display, content light level, and HDR10+ dynamic metadata live.
@@ -11,59 +11,35 @@ If `mediainfo` is on PATH we also run it for richer Atmos detection (E-AC-3 JOC)
 
 import json
 import os
-import subprocess
 from typing import Any
 
-from ..common import DV_FOURCCS, to_float, to_int, which_any
+from ..common import DV_FOURCCS, ToolError, ffprobe_json, run_tool, to_float, to_int, which_any
 
-FFPROBE = "ffprobe"
 MEDIAINFO = "mediainfo"
 
 
 class InspectError(Exception):
-    pass
+    """The file could not be inspected: missing, unreadable, or without a video stream."""
 
 
 # ---------------------------------------------------------------------------
-# subprocess helpers
-
-
-def _run(cmd: list[str], timeout: int = 30) -> str:
-    try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
-    except FileNotFoundError as e:
-        raise InspectError(f"command not found: {cmd[0]}") from e
-    if out.returncode != 0:
-        msg = (out.stderr or out.stdout or "").strip().splitlines()[-1:] or ["unknown error"]
-        raise InspectError(f"{cmd[0]} failed: {msg[0]}")
-    return out.stdout
+# external tools
 
 
 def _ffprobe_streams(path: str) -> dict[str, Any]:
-    raw = _run(
-        [FFPROBE, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", path]
-    )
-    return json.loads(raw)
+    try:
+        return ffprobe_json(path, "-show_format", "-show_streams", timeout=30)
+    except ToolError as e:
+        raise InspectError(str(e)) from e
 
 
-def _ffprobe_first_frame(path: str, video_stream_index: int) -> dict[str, Any]:
-    raw = _run(
-        [
-            FFPROBE,
-            "-v",
-            "error",
-            "-print_format",
-            "json",
-            "-select_streams",
-            f"v:{video_stream_index}",
-            "-show_frames",
-            "-read_intervals",
-            "%+#1",
-            path,
-        ],
-        timeout=60,
-    )
-    return json.loads(raw)
+def _first_frame_side_data(path: str) -> list[dict[str, Any]]:
+    """Side data of the first decoded video frame; best-effort, empty when the probe fails."""
+    try:
+        first = ffprobe_json(path, "-select_streams", "v:0", "-show_frames", "-read_intervals", "%+#1")
+    except ToolError:
+        return []
+    return (first.get("frames") or [{}])[0].get("side_data_list") or []
 
 
 def _mediainfo_audio_tracks(path: str) -> list[dict[str, Any]]:
@@ -71,19 +47,10 @@ def _mediainfo_audio_tracks(path: str) -> list[dict[str, Any]]:
     if not which_any(MEDIAINFO):
         return []
     try:
-        info = json.loads(_run([MEDIAINFO, "--Output=JSON", path]))
-    except InspectError, json.JSONDecodeError:
+        info = json.loads(run_tool([MEDIAINFO, "--Output=JSON", path], timeout=30).stdout)
+    except ToolError, json.JSONDecodeError:
         return []
     return [t for t in (info.get("media", {}).get("track") or []) if t.get("@type") == "Audio"]
-
-
-def _first_frame_side_data(path: str) -> list[dict[str, Any]]:
-    """Side data of the first decoded video frame; best-effort, empty when the probe fails."""
-    try:
-        first = _ffprobe_first_frame(path, 0)
-    except InspectError:
-        return []
-    return (first.get("frames") or [{}])[0].get("side_data_list") or []
 
 
 # ---------------------------------------------------------------------------
