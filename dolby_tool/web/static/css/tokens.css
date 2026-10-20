@@ -1,0 +1,157 @@
+/*
+ * Design tokens — the only place raw values live.
+ *
+ * Every colour is declared once with light-dark(), so a theme is just a
+ * `color-scheme`: "light dark" follows the OS, and the toggle in the sidebar
+ * pins one by setting data-theme on <html>. Text/surface pairs are WCAG AA in
+ * both schemes; the data-viz series are the dataviz reference palette,
+ * validated (CVD + contrast) against --surface-1 in each scheme.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* ---- Typography ------------------------------------------------------ */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'Segoe UI Variable Text', 'Segoe UI', system-ui, Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --font-display:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', 'Segoe UI Variable Display', 'Segoe UI', system-ui,
+    Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --text-2xs: 0.6875rem; /* 11px */
+  --text-xs: 0.75rem; /* 12px */
+  --text-sm: 0.8125rem; /* 13px */
+  --text-md: 0.875rem; /* 14px */
+  --text-lg: 1rem; /* 16px */
+  --text-xl: 1.1875rem; /* 19px */
+  --text-2xl: 1.5rem; /* 24px */
+  --text-3xl: 1.875rem; /* 30px */
+
+  --leading-tight: 1.2;
+  --leading-snug: 1.35;
+  --leading: 1.5;
+  --tracking-tight: -0.02em;
+  --tracking-caps: 0.06em;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* ---- Spacing (4px grid) ---------------------------------------------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ---- Radius ---------------------------------------------------------- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 999px;
+
+  /* ---- Motion ---------------------------------------------------------- */
+  --dur-fast: 150ms;
+  --dur: 200ms;
+  --dur-slow: 250ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* ---- Layout ---------------------------------------------------------- */
+  --sidebar-width: 244px;
+  --content-max: 1240px;
+  --gutter: var(--space-8);
+  --control-height: 36px;
+  --control-height-sm: 28px;
+
+  /* ---- Surfaces & elevation ------------------------------------------- */
+  --bg: light-dark(#f5f5f7, #121214);
+  --bg-sidebar: light-dark(#ececef, #18181b);
+  --surface-1: light-dark(#ffffff, #1c1c1f);
+  --surface-2: light-dark(#f4f4f6, #252529);
+  --surface-3: light-dark(#e9e9ed, #303035);
+  --surface-sunken: light-dark(#f7f7f9, #161618);
+  --surface-hover: light-dark(rgb(0 0 0 / 0.045), rgb(255 255 255 / 0.06));
+  --surface-active: light-dark(rgb(0 0 0 / 0.075), rgb(255 255 255 / 0.1));
+
+  --border: light-dark(rgb(0 0 0 / 0.09), rgb(255 255 255 / 0.08));
+  --border-strong: light-dark(rgb(0 0 0 / 0.16), rgb(255 255 255 / 0.15));
+  --hairline: light-dark(rgb(0 0 0 / 0.06), rgb(255 255 255 / 0.06));
+
+  --shadow-1: 0 1px 2px light-dark(rgb(16 16 24 / 0.06), rgb(0 0 0 / 0.35));
+  --shadow-2:
+    0 1px 2px light-dark(rgb(16 16 24 / 0.05), rgb(0 0 0 / 0.3)),
+    0 8px 24px light-dark(rgb(16 16 24 / 0.06), rgb(0 0 0 / 0.3));
+  --shadow-pop:
+    0 2px 6px light-dark(rgb(16 16 24 / 0.08), rgb(0 0 0 / 0.4)),
+    0 18px 48px light-dark(rgb(16 16 24 / 0.16), rgb(0 0 0 / 0.55));
+  --highlight: inset 0 1px 0 light-dark(rgb(255 255 255 / 0.7), rgb(255 255 255 / 0.04));
+  --scrim: light-dark(rgb(28 28 34 / 0.32), rgb(0 0 0 / 0.6));
+
+  /* ---- Text ------------------------------------------------------------ */
+  --text: light-dark(#1d1d1f, #f4f4f6);
+  --text-2: light-dark(#55555b, #b4b4bc);
+  --text-3: light-dark(#66666d, #93939c);
+  --text-on-solid: #ffffff;
+
+  /* ---- Accent & semantic roles ---------------------------------------- */
+  --accent: light-dark(#0071e3, #0a84ff);
+  --accent-text: light-dark(#0066cc, #5aaeff);
+  --accent-solid: light-dark(#0068d1, #0a6cd6);
+  --accent-solid-hover: light-dark(#005bb8, #1a7ae6);
+  --accent-tint: light-dark(rgb(0 113 227 / 0.1), rgb(10 132 255 / 0.16));
+
+  --success: light-dark(#28a745, #34c759);
+  --success-text: light-dark(#177a34, #4cd97b);
+  --success-tint: light-dark(rgb(40 167 69 / 0.11), rgb(52 199 89 / 0.15));
+
+  --warn: light-dark(#e8890c, #ffb340);
+  --warn-text: light-dark(#965000, #ffc35c);
+  --warn-tint: light-dark(rgb(232 137 12 / 0.12), rgb(255 179 64 / 0.14));
+
+  --danger: light-dark(#e0242f, #ff6b61);
+  --danger-text: light-dark(#c0121c, #ff8a80);
+  --danger-tint: light-dark(rgb(224 36 47 / 0.09), rgb(255 107 97 / 0.15));
+  --danger-solid: #d70015;
+  --danger-solid-hover: #c00013;
+
+  --info: light-dark(#0a8ad0, #5ac8fa);
+  --info-text: light-dark(#08679c, #6cc8f5);
+  --info-tint: light-dark(rgb(10 138 208 / 0.1), rgb(90 200 250 / 0.14));
+
+  --focus-ring: 0 0 0 3px light-dark(rgb(0 113 227 / 0.38), rgb(10 132 255 / 0.55));
+
+  /* ---- Brand ----------------------------------------------------------- */
+  --brand-gradient: linear-gradient(135deg, #5e5ce6 0%, #a259f0 52%, #ff9f0a 100%);
+
+  /* ---- Data viz -------------------------------------------------------- */
+  --series-1: light-dark(#2a78d6, #3987e5); /* blue */
+  --series-2: light-dark(#eb6834, #d95926); /* orange */
+  --series-3: light-dark(#1baf7a, #199e70); /* aqua */
+  --series-4: light-dark(#eda100, #c98500); /* yellow */
+  --series-5: light-dark(#e87ba4, #d55181); /* magenta */
+  --series-6: light-dark(#008300, #008300); /* green */
+  --series-7: light-dark(#6250d6, #9085e9); /* violet */
+  --viz-track: light-dark(#ebebef, #2a2a2f);
+  --meter-fill: var(--series-1);
+  --meter-track: light-dark(#cde2fb, #1d3554); /* a lighter step of the fill's own ramp */
+  --viz-gap: 2px;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
