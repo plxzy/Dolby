@@ -5,7 +5,7 @@ Produces iTunes `iTunEXTC`-style strings (e.g. `mpaa|PG-13|300|`) that TV.app re
 
 import json
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 
 _DATA_PATH = Path(__file__).with_name("data") / "Ratings.json"
@@ -30,9 +30,9 @@ class Rating:
         return f"{self.prefix}|{self.itunes_code}|{self.itunes_value}|"
 
 
-@lru_cache(maxsize=1)
+@cache
 def _table() -> list[dict]:
-    return json.loads(_DATA_PATH.read_text())
+    return json.loads(_DATA_PATH.read_text(encoding="utf-8"))
 
 
 def lookup(store_code: int, media: str, code: str) -> Rating | None:

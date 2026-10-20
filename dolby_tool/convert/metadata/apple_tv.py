@@ -6,10 +6,10 @@ logic, scoped to the endpoints we actually use:
 - `search/incremental` — title search
 - `view/product/{id}` — full movie/show details
 - `view/show/{id}/episodes` — TV episode list (with skip/count paging)
-- `show/{id}/itunesSeasons` — season cover art
 """
 
 from dataclasses import dataclass, field
+from datetime import UTC, date, datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -23,7 +23,6 @@ _BASE = "https://uts-api.itunes.apple.com/uts/v2"
 _SEARCH = f"{_BASE}/search/incremental"
 _DETAILS = f"{_BASE}/view/product/"
 _EPISODES = f"{_BASE}/view/show/"
-_SEASONS = f"{_BASE}/show/"
 _OPTIONS = "&utsk=0&caller=wta&v=58&pfm=appletv"
 
 
@@ -55,20 +54,16 @@ class SearchHit:
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
-    def year(self) -> int | None:
-        if not self.release_date_ms:
-            return None
-        from datetime import UTC, datetime
+    def release_date(self) -> date | None:
+        return _date_from_ms(self.release_date_ms)
 
-        return datetime.fromtimestamp(self.release_date_ms / 1000, tz=UTC).year
+    @property
+    def year(self) -> int | None:
+        return d.year if (d := self.release_date) else None
 
     @property
     def release_date_iso(self) -> str | None:
-        if not self.release_date_ms:
-            return None
-        from datetime import UTC, datetime
-
-        return datetime.fromtimestamp(self.release_date_ms / 1000, tz=UTC).strftime("%Y-%m-%d")
+        return d.isoformat() if (d := self.release_date) else None
 
 
 @dataclass
@@ -259,10 +254,11 @@ def fetch_episode(show_hit: SearchHit, season: int, episode: int, store: Store) 
     if not ep:
         return None
 
+    aired = _date_from_ms(ep.get("releaseDate")) or show_hit.release_date
     meta = Metadata(
         media_kind="tvShow",
         title=ep.get("title"),
-        release_date=_iso_from_ms(ep.get("releaseDate")) or _iso_from_ms(show_hit.release_date_ms),
+        release_date=aired.isoformat() if aired else None,
         long_description=ep.get("description"),
         series_name=show_hit.title,
         series_description=show_hit.description,
@@ -288,12 +284,9 @@ def fetch_episode(show_hit: SearchHit, season: int, episode: int, store: Store) 
 # ----------------------------------------------------------------- helpers
 
 
-def _iso_from_ms(ms: float | None) -> str | None:
-    if not ms:
-        return None
-    from datetime import UTC, datetime
-
-    return datetime.fromtimestamp(ms / 1000, tz=UTC).strftime("%Y-%m-%d")
+def _date_from_ms(ms: float | None) -> date | None:
+    """Apple's catalog dates are epoch milliseconds, UTC."""
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).date() if ms else None
 
 
 def _artworks_from(images: dict[str, Any], *, prefer16x9: bool, preview: bool = False) -> list[Artwork]:
