@@ -75,12 +75,13 @@ class CaptureState:
         self.latest_renderer_hints[event["hint"]] = event
         if event["hint"] == "spatial_rendering_changed":
             self.spatial_rendering_changed_count += 1
+        if len(self.renderer_events) >= SUMMARY_RENDERER_EVENT_LIMIT:
+            return
         # De-duplicate by content: the same hint repeats with only `raw`/`ts` changing.
         key = tuple(sorted((k, repr(v)) for k, v in event.items() if k not in {"raw", "ts"}))
         if key not in self._renderer_keys:
             self._renderer_keys.add(key)
-            if len(self.renderer_events) < SUMMARY_RENDERER_EVENT_LIMIT:
-                self.renderer_events.append(event)
+            self.renderer_events.append(event)
 
 
 # ---------------------------------------------------------------------------

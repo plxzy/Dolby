@@ -1,7 +1,7 @@
 """Playback summaries: HLS/DV/audio verdicts, renderer evidence and Markdown."""
 
 from dolby_tool.capture import LogCapture, parse_line, summarize_log_lines, tvlog_summary_markdown
-from dolby_tool.capture.summary import SUMMARY_RENDERER_EVENT_LIMIT
+from dolby_tool.capture.summary import SUMMARY_RENDERER_EVENT_LIMIT, CaptureState
 
 
 def test_movpkg_selected_stereo_with_atmos_evidence_gets_verdict():
@@ -555,3 +555,12 @@ def test_latest_state_is_tracked_after_the_evidence_list_is_full():
     renderer = summarize_log_lines(lines)["playback"]["renderer_evidence"]
 
     assert renderer["max_spatializable_channels"] == SUMMARY_RENDERER_EVENT_LIMIT
+
+
+def test_renderer_dedup_stops_remembering_keys_once_the_evidence_list_is_full():
+    state = CaptureState()
+    for n in range(SUMMARY_RENDERER_EVENT_LIMIT + 50):
+        state.add({"kind": "renderer_hint", "hint": "max_spatializable_channels", "max_spatializable_channels": n})
+
+    assert len(state.renderer_events) == SUMMARY_RENDERER_EVENT_LIMIT
+    assert len(state._renderer_keys) == SUMMARY_RENDERER_EVENT_LIMIT
