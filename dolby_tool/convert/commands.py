@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from . import atoms, mux, subs_pgs
@@ -244,12 +245,12 @@ def main_convert(argv: list[str]) -> None:
     parser.add_argument(
         "--experimental-force-dec3-joc",
         action="store_true",
-        help="DANGEROUS / EXPERIMENTAL. ORs the low bit of the last dec3 payload "
-        "byte for every EAC-3 track. Does NOT parse the substream/JOC layout, "
-        "and on plain E-AC-3 5.1 it lies to TV.app about Atmos capability. "
-        "Recent dtrace shows TV.app local playback spatializes without this "
-        "patch on the measured build — only use if you have an independent "
-        "Atmos/JOC verification of the source.",
+        help="EXPERIMENTAL. Sets the JOC flag (flag_ec3_extension_type_a) in the dec3 "
+        "box of every E-AC-3 track that already has room for it; tracks without "
+        "room (e.g. ffmpeg's plain E-AC-3 dec3) or with dependent substreams are "
+        "left untouched and reported. Recent dtrace shows TV.app local playback "
+        "spatializes without this patch on the measured build — only use if you "
+        "have an independent Atmos/JOC verification of the source.",
     )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
@@ -287,14 +288,13 @@ def main_convert(argv: list[str]) -> None:
         }
     if args.experimental_force_dec3_joc:
         print(
-            "WARNING: --experimental-force-dec3-joc OR's the dec3 JOC bit without "
-            "parsing the substream layout. If the source is not actually Atmos/JOC "
-            "this writes a lie into the bitstream. Recent dtrace shows TV.app "
-            "spatializes without this patch — prefer skipping unless you have an "
-            "independent Atmos verification of the source.",
+            "WARNING: --experimental-force-dec3-joc sets the dec3 JOC flag. If the "
+            "source is not actually Atmos/JOC this writes a lie into the bitstream. "
+            "Recent dtrace shows TV.app spatializes without this patch — prefer "
+            "skipping unless you have an independent Atmos verification of the source.",
             file=sys.stderr,
         )
-        summary["dec3_joc_patched"] = atoms.patch_dec3_joc(dst)
+        summary["dec3_joc_patched"] = [asdict(r) for r in atoms.patch_dec3_joc(dst)]
 
     if not args.no_metadata:
         summary |= _tag(dst, args)
