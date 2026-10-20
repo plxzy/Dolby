@@ -28,43 +28,43 @@ class RangeRequestHandler(SimpleHTTPRequestHandler):
         if os.path.isdir(path):
             return super().send_head()
         ctype = self.guess_type(path)
-        try:
-            f = open(path, "rb")
-        except OSError:
-            self.send_error(HTTPStatus.NOT_FOUND, "File not found")
-            return None
+        # The stack closes the file on every early return and when sending headers fails;
+        # pop_all() hands it to do_GET/do_HEAD, which close it once the body is copied.
+        with contextlib.ExitStack() as stack:
+            try:
+                f = stack.enter_context(open(path, "rb"))
+            except OSError:
+                self.send_error(HTTPStatus.NOT_FOUND, "File not found")
+                return None
 
-        size = os.fstat(f.fileno()).st_size
-        start, end = self._parse_range(size)
-        if start is None:
-            self.range = None
-            self.send_response(HTTPStatus.OK)
-            self.send_header("Content-type", ctype)
-            self.send_header("Content-Length", str(size))
+            stat = os.fstat(f.fileno())
+            size = stat.st_size
+            start, end = self._parse_range(size)
+            if start is not None and (start >= size or end < start):
+                self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.send_header("Accept-Ranges", "bytes")
+                self.end_headers()
+                return None
+
+            if start is None:
+                self.range = None
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-type", ctype)
+                self.send_header("Content-Length", str(size))
+            else:
+                end = min(end, size - 1)
+                self.range = (start, end)
+                f.seek(start)
+                self.send_response(HTTPStatus.PARTIAL_CONTENT)
+                self.send_header("Content-type", ctype)
+                self.send_header("Content-Length", str(end - start + 1))
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
             self.send_header("Accept-Ranges", "bytes")
-            self.send_header("Last-Modified", self.date_time_string(os.fstat(f.fileno()).st_mtime))
+            self.send_header("Last-Modified", self.date_time_string(stat.st_mtime))
             self.end_headers()
+            stack.pop_all()
             return f
-
-        if start >= size or end < start:
-            f.close()
-            self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
-            self.send_header("Content-Range", f"bytes */{size}")
-            self.send_header("Accept-Ranges", "bytes")
-            self.end_headers()
-            return None
-
-        end = min(end, size - 1)
-        self.range = (start, end)
-        f.seek(start)
-        self.send_response(HTTPStatus.PARTIAL_CONTENT)
-        self.send_header("Content-type", ctype)
-        self.send_header("Content-Length", str(end - start + 1))
-        self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-        self.send_header("Accept-Ranges", "bytes")
-        self.send_header("Last-Modified", self.date_time_string(os.fstat(f.fileno()).st_mtime))
-        self.end_headers()
-        return f
 
     def copyfile(self, source: BinaryIO, outputfile: BinaryIO) -> None:
         if self.range is None:

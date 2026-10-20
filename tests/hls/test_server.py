@@ -1,7 +1,10 @@
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from dolby_tool.hls.server import playlist_url, running_hls_server
+import pytest
+
+from dolby_tool.hls import server as server_module
+from dolby_tool.hls.server import RangeRequestHandler, playlist_url, running_hls_server
 
 
 def test_hls_server_supports_byte_ranges(tmp_path):
@@ -50,3 +53,28 @@ def test_hls_server_rejects_unsatisfiable_ranges(tmp_path):
 
     assert status == 416
     assert content_range == "bytes */10"
+
+
+@pytest.mark.parametrize("headers", [{}, {"Range": "bytes=2-5"}], ids=["whole-file", "byte-range"])
+def test_hls_server_closes_the_file_when_sending_headers_fails(tmp_path, monkeypatch, headers):
+    (tmp_path / "segment.m4s").write_bytes(b"0123456789")
+    opened = []
+
+    def tracking_open(*args, **kwargs):
+        f = open(*args, **kwargs)  # noqa: SIM115 - stands in for open(); the server must close it
+        opened.append(f)
+        return f
+
+    def broken_end_headers(self):
+        raise ConnectionResetError("client went away")
+
+    monkeypatch.setattr(server_module, "open", tracking_open, raising=False)
+    monkeypatch.setattr(RangeRequestHandler, "end_headers", broken_end_headers)
+
+    with running_hls_server(tmp_path, port=0, quiet=True) as server:
+        request = Request(playlist_url(server, "segment.m4s"), headers=headers)
+        with pytest.raises(OSError):
+            urlopen(request, timeout=5)
+
+    assert len(opened) == 1
+    assert opened[0].closed
