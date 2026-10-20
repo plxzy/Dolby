@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from dolby_tool.movpkg import (
+from dolby_tool.hls.movpkg import (
     analyze_movpkg,
     find_top_level_movpkgs,
     movpkg_scan_markdown,

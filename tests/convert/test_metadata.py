@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from dolby_tool.convert.cli import guess_query
+from dolby_tool.convert.commands import guess_query
 from dolby_tool.convert.metadata import ratings, storefronts
 
 

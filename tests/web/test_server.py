@@ -2,7 +2,7 @@ import asyncio
 
 from fastapi.responses import JSONResponse
 
-from dolby_tool import server
+from dolby_tool.web import app as server
 
 
 def test_api_inspect_uses_threadpool_without_changing_response(monkeypatch):

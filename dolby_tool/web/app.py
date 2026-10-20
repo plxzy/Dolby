@@ -14,11 +14,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from .compare import compare_files
-from .inspect import InspectError, inspect_file
-from .tvlog import PREDICATE, LogCapture
+from ..analysis.compare import compare_files
+from ..analysis.inspect import InspectError, inspect_file
+from ..capture.tvlog import PREDICATE, LogCapture
 
-WEB_DIR = Path(__file__).parent / "web"
+WEB_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(title="dolby-tool", version="0.1.0")
 

@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.scripts]
-dolby-tool = "dolby_tool.__main__:main"
+dolby-tool = "dolby_tool.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -37,7 +37,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["-ra", "--strict-markers", "--strict-config"]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
 xfail_strict = true
 markers = [
     "requires_ffmpeg: needs ffmpeg/ffprobe on PATH (skipped otherwise)",

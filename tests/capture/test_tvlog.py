@@ -1,5 +1,4 @@
-from dolby_tool.compare import compare_files
-from dolby_tool.tvlog import LogCapture, _parse_line, summarize_log_lines, tvlog_summary_markdown
+from dolby_tool.capture.tvlog import LogCapture, _parse_line, summarize_log_lines, tvlog_summary_markdown
 
 
 def test_parse_line_figalternate():
@@ -656,27 +655,3 @@ def test_log_capture_summary_keeps_best_audio_after_raw_event_drop():
     assert playback["best_audio"]["format"] == "ec+3"
     assert playback["best_audio"]["channels"] == 16
     assert [audio["format"] for audio in playback["observed_audio"]] == ["ec+3", "qaac"]
-
-
-def test_compare_uses_custom_weights(monkeypatch):
-    spec = {
-        "path": "/tmp/a.mp4",
-        "filename": "a.mp4",
-        "video": {
-            "dolby_vision": {"present": True, "profile": "8.1"},
-            "fourcc": "dvh1",
-            "hdr10_plus": True,
-            "bit_rate_mbps": 80,
-            "width": 3840,
-            "height": 2160,
-        },
-        "audio": [{"atmos": True}],
-        "subtitles": [1, 2, 3],
-        "container": {"size_pretty": "1.0 GiB", "duration_pretty": "01:00:00"},
-    }
-
-    monkeypatch.setattr("dolby_tool.compare.inspect_file", lambda _p: spec)
-    res = compare_files(["/tmp/a.mp4"], weights={"dv_present": 100, "subtitles": 0})
-    assert res["weights"]["dv_present"] == 100.0
-    assert res["weights"]["subtitles"] == 0.0
-    assert res["scores"][0]["components"]["dv_present"] == 100.0

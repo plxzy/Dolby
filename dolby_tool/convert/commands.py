@@ -1,6 +1,6 @@
 """CLI dispatch helpers for `dolby-tool convert` and `dolby-tool tag`.
 
-Wired from `dolby_tool/__main__.py`. Kept thin: argparse + glue.
+Wired from `dolby_tool/cli.py`. Kept thin: argparse + glue.
 """
 from __future__ import annotations
 
