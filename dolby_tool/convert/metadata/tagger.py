@@ -5,17 +5,22 @@ offset adjustments that come with re-writing the moov, knows the iTunes
 atom set, and is one `brew install atomicparsley` away. We don't try to
 re-implement it.
 
-Atom reference:
-  ©nam = name           ©day = release date         desc = description (≤255)
-  ldes = long desc      ©gen = genre                ©ART = artist (cast)
-  ©dir = director       ©wrt = writers              tvsh = show name
-  tvsn = season number  tves = episode number       tven = episode id
-  stik = media kind     hdvd = HD video             covr = cover art (jpg)
-  iTunEXTC = content rating string (e.g. "mpaa|PG-13|300|")
+Atoms written (AtomicParsley flag → iTunes atom):
+  --title ©nam            --year ©day             --description desc (≤255)
+  --longdesc ldes         --genre ©gen            --artist ©ART (cast)
+  --composer ©wrt         --stik stik (movie/TV)  --artwork covr (JPEG, ≤5)
+  --TVShowName tvsh       --TVNetwork tvnn        --TVSeasonNum tvsn
+  --TVEpisodeNum tves     --TVEpisode tven        --albumArtist aART
+  --album ©alb            --tracknum trkn         (library grouping of episodes)
+  --rDNSatom iTunEXTC     content rating string (e.g. "mpaa|PG-13|300|")
+Director, screenwriter and producer credits live in an iTunMOVI plist and are
+not written.
 """
 
 import tempfile
 from pathlib import Path
+
+import httpx
 
 from ...common import run_tool, which_any
 from .apple_tv import Metadata
@@ -93,7 +98,7 @@ def apply(path: Path, meta: Metadata) -> dict[str, object]:
         for i, art in enumerate(meta.artworks[:5]):  # cap at 5 to bound writes
             try:
                 blob = download(art.url)
-            except Exception:
+            except httpx.HTTPError, httpx.InvalidURL:
                 continue
             p = tmp / f"art_{i}.jpg"
             p.write_bytes(blob)
@@ -112,6 +117,6 @@ def apply(path: Path, meta: Metadata) -> dict[str, object]:
     return {
         "applied": True,
         "fields": sorted(set(fields_set)),
-        "artwork_count": len(artwork_paths) if "artwork_paths" in dir() else 0,
+        "artwork_count": len(artwork_paths),
         "rating": meta.rating.itunes_extc() if meta.rating else None,
     }
