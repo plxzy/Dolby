@@ -229,10 +229,14 @@ def _fourcc_warning(fourcc: str, dolby_vision: DolbyVision) -> str | None:
     """Explain why a DV stream behind a non-DV sample entry will not play as DV."""
     if not dolby_vision.present or fourcc in DV_FOURCCS:
         return None
-    return (
-        f"video sample-entry FourCC is '{fourcc}' — TV.app will NOT engage the DV "
-        f"pipeline. Remux with `ffmpeg -c copy -tag:v dvh1 -strict unofficial`."
-    )
+    prefix = f"video sample-entry FourCC is '{fourcc}' — TV.app will NOT engage the DV pipeline."
+    if dolby_vision.profile_raw == 7:
+        return (
+            f"{prefix} This is dual-layer Dolby Vision profile 7, which Apple players do not "
+            "support at all: convert it to profile 8.1 first (e.g. `dovi_tool -m 2 convert`), "
+            "then remux with `-tag:v dvh1`."
+        )
+    return f"{prefix} Remux with `ffmpeg -c copy -tag:v dvh1 -strict unofficial`."
 
 
 def _has_side_data(side_data: list[Raw], *needles: str) -> bool:

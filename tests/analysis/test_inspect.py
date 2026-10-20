@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from dolby_tool.analysis.inspect import InspectError, inspect_file
+from dolby_tool.analysis.inspect import InspectError, _dolby_vision, _fourcc_warning, inspect_file
 from dolby_tool.common import ToolError
 
 
@@ -114,3 +114,49 @@ def test_hdr10_found_in_frame_side_data(media_file, monkeypatch):
 def test_sdr_has_no_hdr10(media_file, monkeypatch):
     monkeypatch.setattr("dolby_tool.analysis.inspect.ffprobe_json", _fake_ffprobe([_VIDEO]))
     assert not inspect_file(media_file).video.hdr10.present
+
+
+def _dovi(profile: int, compat: int) -> dict:
+    return {
+        "side_data_type": "DOVI configuration record",
+        "dv_profile": profile,
+        "dv_bl_signal_compatibility_id": compat,
+        "rpu_present_flag": 1,
+        "bl_present_flag": 1,
+    }
+
+
+@pytest.mark.parametrize("profile", [5, 8])
+def test_fourcc_warning_for_single_layer_profiles_suggests_dvh1_remux(profile):
+    warning = _fourcc_warning("hvc1", _dolby_vision([_dovi(profile, 1)]))
+    assert warning is not None
+    assert "'hvc1'" in warning
+    assert "-tag:v dvh1 -strict unofficial" in warning
+
+
+def test_fourcc_warning_for_profile_7_asks_for_conversion_first():
+    warning = _fourcc_warning("hvc1", _dolby_vision([_dovi(7, 6)]))
+    assert warning is not None
+    assert "profile 7" in warning
+    assert "8.1" in warning
+    assert "-strict unofficial" not in warning
+
+
+@pytest.mark.parametrize(
+    ("fourcc", "side_data"),
+    [("dvh1", [_dovi(8, 1)]), ("hvc1", []), ("dvh1", [])],
+    ids=["dv-fourcc", "no-dv", "dv-fourcc-without-dv"],
+)
+def test_no_fourcc_warning_when_nothing_is_broken(fourcc, side_data):
+    assert _fourcc_warning(fourcc, _dolby_vision(side_data)) is None
+
+
+def test_inspect_surfaces_the_warning(media_file, monkeypatch):
+    stream = {**_VIDEO, "codec_tag_string": "hvc1", "side_data_list": [_dovi(7, 6)]}
+    monkeypatch.setattr("dolby_tool.analysis.inspect.ffprobe_json", _fake_ffprobe([stream]))
+
+    video = inspect_file(media_file).video
+
+    assert video.dolby_vision.profile == "7"
+    assert video.fourcc_warning is not None
+    assert "profile 7" in video.fourcc_warning
