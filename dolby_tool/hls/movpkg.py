@@ -66,12 +66,12 @@ def find_top_level_movpkgs(root: str | Path) -> list[Path]:
     if root_path.suffix == ".movpkg":
         return [root_path]
 
-    packages: list[Path] = []
-    for path in root_path.rglob("*.movpkg"):
-        if any(parent.suffix == ".movpkg" for parent in path.parents):
-            continue
-        packages.append(path)
-    return sorted(packages)
+    # Only parents below the root count: the root itself may sit inside a package.
+    return sorted(
+        path
+        for path in root_path.rglob("*.movpkg")
+        if not any(parent.suffix == ".movpkg" for parent in path.relative_to(root_path).parents)
+    )
 
 
 def scan_movpkgs(root: str | Path, selected_group: str | None = None) -> dict[str, Any]:
