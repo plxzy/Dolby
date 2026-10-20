@@ -27,6 +27,21 @@ ATMOS_EAC3 = {
 }
 
 
+def dovi(profile: int, level: int, compatibility_id: int) -> dict[str, Any]:
+    """ffprobe's side-data entry for a Dolby Vision configuration record."""
+    return {
+        "side_data_type": "DOVI configuration record",
+        "dv_version_major": 1,
+        "dv_version_minor": 0,
+        "dv_profile": profile,
+        "dv_level": level,
+        "rpu_present_flag": 1,
+        "el_present_flag": 0,
+        "bl_present_flag": 1,
+        "dv_bl_signal_compatibility_id": compatibility_id,
+    }
+
+
 @dataclass
 class FakeTools:
     """Stands in for ffprobe and ffmpeg at the `subprocess.run` boundary used by `common.run_tool`.
@@ -247,3 +262,40 @@ def test_package_round_trip_with_real_ffmpeg(tmp_path, media_clip):
         "stream_main.m3u8",
         *(f"stream_main_{index:04d}.m4s" for index in range(segments)),
     }
+
+
+@pytest.mark.parametrize(
+    ("video", "expected"),
+    [
+        pytest.param({"color_transfer": "smpte2084", "color_primaries": "bt2020"}, "PQ", id="hdr10"),
+        pytest.param({"color_transfer": "arib-std-b67", "color_primaries": "bt2020"}, "HLG", id="hlg"),
+        pytest.param({"color_transfer": "bt709", "color_primaries": "bt2020"}, "SDR", id="sdr-wide-gamut"),
+        pytest.param({}, "SDR", id="untagged"),
+        pytest.param({"side_data_list": [dovi(5, 6, 0)]}, "PQ", id="dolby-vision-5"),
+        pytest.param({"side_data_list": [dovi(8, 6, 4)]}, "HLG", id="dolby-vision-8.4"),
+        pytest.param({"color_transfer": "smpte2084", "side_data_list": [dovi(8, 6, 1)]}, "PQ", id="dolby-vision-8.1"),
+    ],
+)
+def test_video_range_follows_the_transfer_function(tmp_path, source, fake_tools, video, expected):
+    fake_tools.streams = [{"codec_type": "video", "codec_tag_string": "hvc1", **video}, ATMOS_EAC3]
+    output = tmp_path / "out"
+
+    summary = package_hls_from_file(source, output)
+
+    assert summary["master_playlist_tags"]["video_range"] == expected
+    assert f"VIDEO-RANGE={expected}\n" in (output / "master.m3u8").read_text(encoding="utf-8")
+
+
+@pytest.mark.requires_ffmpeg
+def test_hlg_clip_is_labelled_hlg(tmp_path, media_clip):
+    clip = media_clip(
+        "hls_hevc_hlg.mp4",
+        "-c:v", "libx265", "-x265-params", "log-level=error", "-tag:v", "hvc1",
+        "-color_primaries", "bt2020", "-color_trc", "arib-std-b67", "-colorspace", "bt2020nc",
+        "-c:a", "eac3",
+    )  # fmt: skip
+
+    summary = package_hls_from_file(clip, tmp_path / "hls", segment_time=1)
+
+    assert summary["master_playlist_tags"]["video_range"] == "HLG"
+    assert summary["master_playlist_tags"]["codecs"] == "hvc1,ec-3"

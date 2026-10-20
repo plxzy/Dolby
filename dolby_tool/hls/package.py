@@ -5,11 +5,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Self
 
-from ..common import ffprobe_json, run_tool
+from ..common import ffprobe_json, run_tool, to_int
 from .playlist import MASTER_PLAYLIST, playlist_references, set_attribute
 
 # HEVC Dolby Vision sample entries; the HLS CODECS attribute needs a profile/level suffix for them.
 _DV_HEVC_TAGS = frozenset({"dvh1", "dvhe"})
+# HLS VIDEO-RANGE by the stream's transfer function; anything else is SDR.
+_VIDEO_RANGES = {"smpte2084": "PQ", "arib-std-b67": "HLG"}
 
 # Output names handed to ffmpeg: `%v` is the variant name, `%04d` the segment number. With several
 # variants ffmpeg suffixes the init segment with the variant index (init_0.mp4, init_1.mp4, ...).
@@ -30,23 +32,44 @@ _FINDER_METADATA = ".DS_Store"
 
 
 @dataclass(frozen=True, slots=True)
+class DolbyVision:
+    """A stream's Dolby Vision configuration record, from ffprobe's side data."""
+
+    profile: int
+    level: int
+    compatibility_id: int
+
+    @classmethod
+    def from_stream(cls, stream: dict[str, Any]) -> Self | None:
+        records = stream.get("side_data_list") or []
+        record = next((data for data in records if data.get("side_data_type") == "DOVI configuration record"), None)
+        if record is None:
+            return None
+        profile, level = to_int(record.get("dv_profile")), to_int(record.get("dv_level"))
+        if profile is None or level is None:
+            return None
+        return cls(profile, level, to_int(record.get("dv_bl_signal_compatibility_id")) or 0)
+
+
+@dataclass(frozen=True, slots=True)
 class MasterTags:
     """Master-playlist attributes worked out from the probed streams (ffmpeg's own are too bare)."""
 
     codecs: str | None
     audio_channels: str | None
     frame_rate: str | None
-    video_range: str | None
+    video_range: str
     language: str
 
     @classmethod
     def for_streams(cls, video: dict[str, Any], audio: dict[str, Any]) -> Self:
+        dolby_vision = DolbyVision.from_stream(video)
         codecs = ",".join(codec for codec in (_video_codec(video), _audio_codec(audio)) if codec)
         return cls(
             codecs=codecs or None,
             audio_channels=_audio_channels(audio),
             frame_rate=_frame_rate(video),
-            video_range=_video_range(video),
+            video_range=_video_range(video, dolby_vision),
             language=_language(audio),
         )
 
@@ -225,8 +248,7 @@ def _patch_master_playlist(path: Path, tags: MasterTags) -> None:
                 line = set_attribute(line, "FRAME-RATE", tags.frame_rate, quoted=False)
             if tags.codecs:
                 line = set_attribute(line, "CODECS", tags.codecs, quoted=True)
-            if tags.video_range:
-                line = set_attribute(line, "VIDEO-RANGE", tags.video_range, quoted=False)
+            line = set_attribute(line, "VIDEO-RANGE", tags.video_range, quoted=False)
         lines.append(line)
     path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
 
@@ -269,12 +291,15 @@ def _frame_rate(stream: dict[str, Any]) -> str | None:
     return f"{rate:.3f}" if rate else None
 
 
-def _video_range(stream: dict[str, Any]) -> str | None:
-    transfer = str(stream.get("color_transfer") or "").lower()
-    primaries = str(stream.get("color_primaries") or "").lower()
-    if transfer == "smpte2084" or primaries == "bt2020":
-        return "PQ"
-    return None
+def _video_range(stream: dict[str, Any], dolby_vision: DolbyVision | None) -> str:
+    # Wide-gamut primaries say nothing about the range; the transfer function does. Dolby Vision
+    # profile 5 signals no usable transfer (it is PQ-based) and 8.4 is the HLG-compatible flavour.
+    if dolby_vision is not None:
+        if dolby_vision.profile == 5:
+            return "PQ"
+        if dolby_vision.profile == 8 and dolby_vision.compatibility_id == 4:
+            return "HLG"
+    return _VIDEO_RANGES.get(str(stream.get("color_transfer") or "").lower(), "SDR")
 
 
 def _language(stream: dict[str, Any]) -> str:
