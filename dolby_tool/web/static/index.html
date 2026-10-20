@@ -1,98 +1,190 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>dolby-tool</title>
-<link rel="stylesheet" href="/static/styles.css?v=ui-refactor-20260523" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="description" content="Inspect Dolby Vision, HDR and Atmos media, compare releases, and see what TV.app actually plays.">
+  <title>dolby·tool</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%235e5ce6'/%3E%3Cstop offset='.52' stop-color='%23a259f0'/%3E%3Cstop offset='1' stop-color='%23ff9f0a'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cg fill='none' stroke='%23fff' stroke-linecap='round'%3E%3Cpath d='M8.8 8.5v15M8.8 8.5a7.5 7.5 0 0 1 0 15' stroke-width='2.6'/%3E%3Cpath d='M17.9 9.3a11 11 0 0 1 0 13.4' stroke-opacity='.85' stroke-width='2.2'/%3E%3Cpath d='M21.8 7.6a15.2 15.2 0 0 1 0 16.8' stroke-opacity='.5' stroke-width='2.2'/%3E%3C/g%3E%3C/svg%3E">
+  <script>
+    // Apply a saved theme before first paint; js/theme.js owns the toggle (same storage key).
+    try {
+      const theme = localStorage.getItem('dolby-tool.theme');
+      if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+    } catch {}
+  </script>
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/layout.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+  <link rel="stylesheet" href="/static/css/views.css">
+  <script type="module" src="/static/js/main.js"></script>
 </head>
 <body>
-<header>
-  <h1>dolby<span class="dot">·</span>tool</h1>
-  <nav class="tabs">
-    <button class="tab active" data-tab="inspect">Inspect</button>
-    <button class="tab" data-tab="compare">Compare</button>
-    <button class="tab" data-tab="capture">TV Capture</button>
-  </nav>
-</header>
+  <a class="skip-link" href="#main">Skip to content</a>
 
-<main>
-  <div id="capabilities-banner" class="banner" hidden></div>
+  <div class="app">
+    <aside class="sidebar">
+      <a class="brand" href="#/inspect" aria-label="dolby·tool home">
+        <svg class="brand-mark" viewBox="0 0 32 32" width="30" height="30" aria-hidden="true">
+          <defs>
+            <linearGradient id="brand-gradient" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#5e5ce6"/>
+              <stop offset=".52" stop-color="#a259f0"/>
+              <stop offset="1" stop-color="#ff9f0a"/>
+            </linearGradient>
+          </defs>
+          <rect width="32" height="32" rx="8" fill="url(#brand-gradient)"/>
+          <g fill="none" stroke="#fff" stroke-linecap="round">
+            <path d="M8.8 8.5v15M8.8 8.5a7.5 7.5 0 0 1 0 15" stroke-width="2.6"/>
+            <path d="M17.9 9.3a11 11 0 0 1 0 13.4" stroke-opacity=".85" stroke-width="2.2"/>
+            <path d="M21.8 7.6a15.2 15.2 0 0 1 0 16.8" stroke-opacity=".5" stroke-width="2.2"/>
+          </g>
+        </svg>
+        <span class="brand-name" aria-hidden="true">dolby<span class="brand-dot">·</span>tool</span>
+      </a>
 
-  <!-- ============================================================= -->
-  <!-- Inspect tab                                                    -->
-  <!-- ============================================================= -->
-  <section id="tab-inspect" class="panel active">
-    <div class="dropzone" id="inspect-drop">
-      <p>Drag a video file from Finder, or</p>
-      <div class="row">
-        <input type="text" id="inspect-path" placeholder="/absolute/path/to/file.mp4" spellcheck="false" />
-        <button class="btn" id="inspect-browse">Browse…</button>
-        <button class="btn primary" id="inspect-go">Inspect</button>
+      <nav class="nav-section" aria-label="Primary">
+        <p class="nav-heading" aria-hidden="true">Tools</p>
+        <ul class="nav">
+          <li><a class="nav-item" href="#/inspect" data-nav="inspect"><span class="nav-icon" data-icon="inspect"></span><span>Inspect</span></a></li>
+          <li><a class="nav-item" href="#/compare" data-nav="compare"><span class="nav-icon" data-icon="compare"></span><span>Compare</span></a></li>
+          <li><a class="nav-item" href="#/capture" data-nav="capture"><span class="nav-icon" data-icon="capture"></span><span>TV Capture</span></a></li>
+        </ul>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="notices" id="notices"></div>
+        <form class="theme-switch" id="theme-form" role="radiogroup" aria-label="Theme">
+          <label title="Match system"><input type="radio" name="theme" value="system" checked><span data-icon="system" data-icon-size="16"></span><span class="visually-hidden">System theme</span></label>
+          <label title="Light"><input type="radio" name="theme" value="light"><span data-icon="light" data-icon-size="16"></span><span class="visually-hidden">Light theme</span></label>
+          <label title="Dark"><input type="radio" name="theme" value="dark"><span data-icon="dark" data-icon-size="16"></span><span class="visually-hidden">Dark theme</span></label>
+        </form>
+        <p class="sidebar-caption">Runs locally — your files never leave this machine.</p>
       </div>
-      <p class="hint">Works on .mp4, .m4v, .mkv, .mov, .ts</p>
-    </div>
-    <div id="inspect-result" class="result"></div>
-  </section>
+    </aside>
 
-  <!-- ============================================================= -->
-  <!-- Compare tab                                                    -->
-  <!-- ============================================================= -->
-  <section id="tab-compare" class="panel">
-    <div class="dropzone" id="compare-drop">
-      <p>Drop multiple files, or add them one at a time. Then click <em>Compare</em>.</p>
-      <div class="row">
-        <button class="btn" id="compare-add">Add file(s)…</button>
-        <button class="btn" id="compare-add-folder">Add folder contents…</button>
-        <button class="btn" id="compare-clear">Clear</button>
-        <button class="btn primary" id="compare-go">Compare</button>
-      </div>
-      <input type="text" id="compare-folder-path" placeholder="Or paste a folder path then click 'Add folder contents'" spellcheck="false" />
-    </div>
-    
-    <div class="weights" id="compare-weights">
-      <p class="hint">Score weights (higher = more impact):</p>
-      <div class="weights-grid">
-        <label>DV present <input type="number" id="w-dv-present" value="25" min="0" step="1"></label>
-        <label>DV FourCC OK <input type="number" id="w-dv-fourcc" value="25" min="0" step="1"></label>
-        <label>HDR10+ <input type="number" id="w-hdr10plus" value="10" min="0" step="1"></label>
-        <label>Atmos <input type="number" id="w-atmos" value="15" min="0" step="1"></label>
-        <label>Video bitrate <input type="number" id="w-bitrate" value="20" min="0" step="1"></label>
-        <label>Resolution <input type="number" id="w-resolution" value="10" min="0" step="1"></label>
-        <label>Subtitles <input type="number" id="w-subtitles" value="5" min="0" step="1"></label>
-      </div>
-    </div>
+    <main class="main" id="main" tabindex="-1">
+      <!-- Inspect -->
+      <section class="view" data-view="inspect" aria-labelledby="inspect-title">
+        <header class="view-header">
+          <div class="view-heading">
+            <h1 id="inspect-title">Inspect</h1>
+            <p>Read a file’s Dolby Vision, HDR and Atmos signalling — and whether TV.app will honour it.</p>
+          </div>
+        </header>
 
-    <ul id="compare-list" class="file-list"></ul>
-    <div id="compare-result" class="result"></div>
-  </section>
+        <form class="dropzone inspect-drop" id="inspect-form" data-state="empty" aria-label="Choose a file to inspect">
+          <div class="dropzone-intro">
+            <span class="dropzone-art" data-icon="drop" data-icon-size="26"></span>
+            <h2>Drop a video to inspect</h2>
+            <p>Drag a file from Finder, or paste its absolute path.</p>
+          </div>
+          <div class="path-field">
+            <span class="path-icon" data-icon="file"></span>
+            <label class="visually-hidden" for="inspect-path">File path</label>
+            <input class="input" id="inspect-path" type="text" placeholder="/Volumes/Media/Movie (2024).mkv" spellcheck="false" autocomplete="off">
+            <button class="btn" type="button" id="inspect-browse">Browse…</button>
+            <button class="btn btn-primary" type="submit">Inspect</button>
+            <button class="btn btn-ghost btn-icon reset-button" type="button" id="inspect-reset" aria-label="Clear and start over" title="Clear"><span data-icon="close" data-icon-size="16"></span></button>
+          </div>
+          <p class="dropzone-formats" aria-label="Supported formats">MP4 · M4V · MKV · MOV · TS</p>
+        </form>
 
-  <!-- ============================================================= -->
-  <!-- Capture tab                                                    -->
-  <!-- ============================================================= -->
-  <section id="tab-capture" class="panel">
-    <div class="capture-controls">
-      <button class="btn primary big" id="capture-start">Start Capture</button>
-      <button class="btn danger big" id="capture-stop" disabled>Stop</button>
-      <span id="capture-status" class="status idle">Idle</span>
-      <span id="capture-counter" class="counter">0 events</span>
-    </div>
-    <p class="hint">Click <strong>Start</strong>, then play something in TV.app. Click <strong>Stop</strong> and you'll see what actually got decoded — DV profile, FourCC, audio format, spatialization, bitrate.</p>
+        <div class="view-output" id="inspect-output" aria-live="polite"></div>
+      </section>
 
-    <div class="capture-grid">
-      <div class="capture-stream">
-        <h3>Live events</h3>
-        <div id="capture-events" class="events"></div>
-      </div>
-      <div class="capture-summary">
-        <h3>Summary</h3>
-        <div id="capture-summary" class="result"></div>
-      </div>
-    </div>
-  </section>
+      <!-- Compare -->
+      <section class="view" data-view="compare" aria-labelledby="compare-title" hidden>
+        <header class="view-header">
+          <div class="view-heading">
+            <h1 id="compare-title">Compare</h1>
+            <p>Rank releases of the same title by what Apple devices will actually play.</p>
+          </div>
+          <div class="view-actions">
+            <button class="btn" type="button" id="compare-clear">Clear</button>
+            <button class="btn btn-primary" type="button" id="compare-go"><span data-icon="compare" data-icon-size="16"></span><span id="compare-go-label">Compare</span></button>
+          </div>
+        </header>
 
-</main>
+        <div class="compare-setup">
+          <section class="card dropzone files-card" id="compare-drop" aria-labelledby="files-title">
+            <header class="card-header">
+              <h2 class="card-title" id="files-title"><span data-icon="file" data-icon-size="16"></span>Files</h2>
+              <span class="card-meta" id="compare-count">0 files</span>
+            </header>
+            <ul class="file-list" id="compare-list"></ul>
+            <div class="files-actions">
+              <button class="btn" type="button" id="compare-add"><span data-icon="plus" data-icon-size="16"></span>Add files…</button>
+              <form class="folder-field" id="compare-folder-form">
+                <label class="visually-hidden" for="compare-folder">Folder path</label>
+                <input class="input" id="compare-folder" type="text" placeholder="Folder path — adds every video in it" spellcheck="false" autocomplete="off">
+                <button class="btn" type="submit"><span data-icon="folder" data-icon-size="16"></span>Add folder</button>
+              </form>
+            </div>
+          </section>
 
-<script src="/static/app.js?v=ui-refactor-20260523"></script>
+          <section class="card weights-card" aria-labelledby="weights-title">
+            <header class="card-header">
+              <h2 class="card-title" id="weights-title"><span data-icon="sliders" data-icon-size="16"></span>Score weights</h2>
+              <button class="btn btn-ghost btn-sm" type="button" id="weights-reset">Reset to defaults</button>
+            </header>
+            <ul class="weights" id="weights-list"></ul>
+            <footer class="weights-footer">
+              <p>Bitrate scales to 80 Mbps · 2160p scores full, 1080p half · subtitles count up to 5 tracks.</p>
+              <p class="weights-max">Max score <strong id="weights-max">110</strong></p>
+            </footer>
+          </section>
+        </div>
+
+        <div class="view-output" id="compare-output" aria-live="polite"></div>
+      </section>
+
+      <!-- TV Capture -->
+      <section class="view" data-view="capture" aria-labelledby="capture-title" hidden>
+        <header class="view-header">
+          <div class="view-heading">
+            <h1 id="capture-title">TV Capture</h1>
+            <p>Stream TV.app’s playback logs and see what was really decoded — not what the file claims.</p>
+          </div>
+          <div class="view-actions">
+            <button class="btn" type="button" id="capture-import"><span data-icon="import" data-icon-size="16"></span>Import saved log…</button>
+            <input type="file" id="capture-file" accept=".log,.txt,text/plain" aria-label="Saved TV.app log file" hidden>
+            <button class="btn btn-primary" type="button" id="capture-start"><span data-icon="play" data-icon-size="14"></span>Start capture</button>
+            <button class="btn btn-danger" type="button" id="capture-stop" hidden><span data-icon="stop" data-icon-size="14"></span>Stop</button>
+          </div>
+        </header>
+
+        <div class="capture-bar">
+          <span class="status-pill" id="capture-status" data-state="idle" role="status">
+            <span class="status-dot" aria-hidden="true"></span><span id="capture-status-label">Idle</span>
+          </span>
+          <span class="capture-stat" id="capture-counter">0 events</span>
+          <span class="capture-stat tabular" id="capture-elapsed"></span>
+          <p class="capture-help">Start, then play something in TV.app. Stop to see the verdict.</p>
+        </div>
+
+        <div id="capture-platform"></div>
+
+        <div class="capture-grid">
+          <section class="card timeline-card" aria-labelledby="timeline-title">
+            <header class="card-header">
+              <h2 class="card-title"><span data-icon="capture" data-icon-size="16"></span><span id="timeline-title">Live events</span></h2>
+            </header>
+            <div class="timeline-scroller" id="capture-scroller">
+              <ol class="timeline" id="capture-events" role="log" aria-live="off" aria-labelledby="timeline-title"></ol>
+              <p class="timeline-empty">Events appear here as TV.app reports them.</p>
+            </div>
+            <button class="btn btn-sm jump-latest" type="button" id="capture-jump" hidden><span data-icon="arrowDown" data-icon-size="14"></span>Jump to latest</button>
+          </section>
+
+          <section class="capture-summary" id="capture-summary" aria-label="Capture summary" aria-live="polite"></section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast-region" id="toasts" role="status" aria-live="polite"></div>
 </body>
 </html>
