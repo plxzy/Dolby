@@ -2,5 +2,6 @@
 
 from .compare import compare_files
 from .inspect import InspectError, inspect_file
+from .models import CompareResult, MediaSpec
 
-__all__ = ["InspectError", "compare_files", "inspect_file"]
+__all__ = ["CompareResult", "InspectError", "MediaSpec", "compare_files", "inspect_file"]
