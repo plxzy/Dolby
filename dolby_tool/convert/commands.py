@@ -10,11 +10,17 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+from ..common import ToolError
 from . import atoms, mux, subs_pgs
 from .metadata import apple_tv, storefronts, tagger
 
-_TV_RE = re.compile(r"(?P<show>.+?)[. _-]*[sS](?P<s>\d{1,2})[eE](?P<e>\d{1,3})")
-_YEAR_RE = re.compile(r"(?P<title>.+?)[. _(]+(?P<year>(19|20)\d{2})")
+# "Show.Name.S02E03…": the SxxExx marker must follow a separator and end at a non-digit,
+# so words like "Classes2e1" or "S01E021080p" don't parse as an episode.
+_TV_RE = re.compile(r"(?P<show>.+?)[. _-]+[sS](?P<s>\d{1,2})[eE](?P<e>\d{1,3})(?!\d)")
+# A year is a standalone 19xx/20xx token; "(2017)" is preferred, otherwise the last one wins
+# ("Blade.Runner.2049.2017" is the 2017 film Blade Runner 2049).
+_PAREN_YEAR_RE = re.compile(r"\((?:19|20)\d{2}\)")
+_YEAR_RE = re.compile(r"(?<![0-9A-Za-z])(?:19|20)\d{2}(?![0-9A-Za-z])")
 # Apple-TV / Subler layout: ".../TV Shows/<Show>/Season N/EE Title.ext"
 _SEASON_DIR_RE = re.compile(r"^(?:Season|Sezon|Series|Staffel)[\s_]*(\d{1,2})$", re.IGNORECASE)
 _EP_PREFIX_RE = re.compile(r"^(?P<ep>\d{1,3})[\s._-]+(?P<title>.+)$")
@@ -35,7 +41,7 @@ def guess_query(filename: str | Path) -> tuple[str, str, int | None, int | None]
 
     # Library-layout fallback: parent directory matches "Season N", episode
     # number is the leading digits of the filename, show name is the dir above.
-    parents = list(p.resolve().parents) if str(p).startswith("/") else list(p.parents)
+    parents = list(p.resolve().parents) if p.is_absolute() else list(p.parents)
     if parents:
         season_match = _SEASON_DIR_RE.match(parents[0].name)
         ep_match = _EP_PREFIX_RE.match(stem)
@@ -47,10 +53,16 @@ def guess_query(filename: str | Path) -> tuple[str, str, int | None, int | None]
                 int(ep_match.group("ep")),
             )
 
-    yr = _YEAR_RE.search(stem)
-    if yr:
-        return ("movie", _clean(yr.group("title")), None, None)
-    return ("movie", _clean(stem), None, None)
+    return ("movie", _movie_title(stem), None, None)
+
+
+def _movie_title(stem: str) -> str:
+    """The title before the release year, or the whole cleaned stem when there is no year."""
+    years = list(_PAREN_YEAR_RE.finditer(stem)) or list(_YEAR_RE.finditer(stem))
+    for year in reversed(years):
+        if title := _clean(stem[: year.start()]).rstrip(" ([-"):
+            return title
+    return _clean(stem)
 
 
 def _clean(s: str) -> str:
@@ -122,8 +134,10 @@ def _pick_interactive(prompt: str, options: list[str]) -> int | None:
     for i, opt in enumerate(options, start=1):
         print(f"  {i}. {opt}", file=sys.stderr)
     print("  -. skip metadata", file=sys.stderr)
+    # input() would write its prompt to stdout and corrupt --json output.
+    print("Pick: ", end="", file=sys.stderr, flush=True)
     try:
-        raw = input("Pick: ").strip()
+        raw = input().strip()
     except EOFError:
         return None
     if raw in ("", "-", "0"):
@@ -157,58 +171,67 @@ def resolve_metadata(
     if episode_override is not None:
         episode, kind = episode_override, "tvShow"
 
-    if content_id:
-        # Direct fetch path
-        fake_hit = apple_tv.SearchHit(
-            id=content_id,
-            type=("Show" if kind == "tvShow" else "Movie"),
-            title=None,
-            description=None,
-            release_date_ms=None,
-            images={},
-            roles_summary=None,
-            rating_display=None,
-            raw={},
-        )
+    with apple_tv.session():
+        if content_id:
+            # Direct fetch path
+            fake_hit = apple_tv.SearchHit(
+                id=content_id,
+                type=("Show" if kind == "tvShow" else "Movie"),
+                title=None,
+                description=None,
+                release_date_ms=None,
+                images={},
+                roles_summary=None,
+                rating_display=None,
+                raw={},
+            )
+            if kind == "tvShow":
+                if season is None or episode is None:
+                    print(
+                        "TV mode requires --season and --episode (or an SxxExx filename) "
+                        "to fetch episode metadata; refusing to fall back to movie tagging.",
+                        file=sys.stderr,
+                    )
+                    return None
+                return apple_tv.fetch_episode(fake_hit, season, episode, store)
+            return apple_tv.fetch_movie(fake_hit, store)
+
+        if kind == "tvShow":
+            hits = apple_tv.search_shows(title, store)
+        else:
+            hits = apple_tv.search_movies(title, store)
+
+        if not hits:
+            print(f"No Apple TV matches for {title!r} ({storefront}).", file=sys.stderr)
+            return None
+
+        if interactive:
+            labels = [f"{(h.title or '?')} ({h.year or '?'}) — id={h.id}" for h in hits[:8]]
+            idx = _pick_interactive(f"Apple TV results for {title!r}:", labels)
+            if idx is None:
+                return None
+            chosen = hits[idx]
+        else:
+            chosen = hits[0]
+
         if kind == "tvShow":
             if season is None or episode is None:
                 print(
-                    "TV mode requires --season and --episode (or an SxxExx filename) "
-                    "to fetch episode metadata; refusing to fall back to movie tagging.",
+                    f"TV match {chosen.title!r} chosen but season/episode missing; "
+                    "pass --season/--episode or use an SxxExx filename. Skipping metadata.",
                     file=sys.stderr,
                 )
                 return None
-            return apple_tv.fetch_episode(fake_hit, season, episode, store)
-        return apple_tv.fetch_movie(fake_hit, store)
+            return apple_tv.fetch_episode(chosen, season, episode, store)
+        return apple_tv.fetch_movie(chosen, store)
 
-    if kind == "tvShow":
-        hits = apple_tv.search_shows(title, store)
-    else:
-        hits = apple_tv.search_movies(title, store)
 
-    if not hits:
-        print(f"No Apple TV matches for {title!r} ({storefront}).", file=sys.stderr)
-        return None
-
-    if interactive:
-        labels = [f"{(h.title or '?')} ({h.year or '?'}) — id={h.id}" for h in hits[:8]]
-        idx = _pick_interactive(f"Apple TV results for {title!r}:", labels)
-        if idx is None:
-            return None
-        chosen = hits[idx]
-    else:
-        chosen = hits[0]
-
-    if kind == "tvShow":
-        if season is None or episode is None:
-            print(
-                f"TV match {chosen.title!r} chosen but season/episode missing; "
-                "pass --season/--episode or use an SxxExx filename. Skipping metadata.",
-                file=sys.stderr,
-            )
-            return None
-        return apple_tv.fetch_episode(chosen, season, episode, store)
-    return apple_tv.fetch_movie(chosen, store)
+def _storefront(value: str) -> str:
+    """argparse type: a known storefront country code, upper-cased."""
+    country = value.upper()
+    if country not in storefronts.countries():
+        raise argparse.ArgumentTypeError(f"unknown storefront {value!r} (known: {', '.join(storefronts.countries())})")
+    return country
 
 
 def main_convert(argv: list[str]) -> None:
@@ -259,7 +282,10 @@ def main_convert(argv: list[str]) -> None:
     dst = Path(args.output).expanduser().resolve()
 
     summary: dict[str, object] = {"input": str(src), "output": str(dst)}
-    summary["mux"] = mux.mux(src, dst, overwrite=args.overwrite)
+    try:
+        summary["mux"] = mux.mux(src, dst, overwrite=args.overwrite)
+    except (ValueError, ToolError) as e:
+        sys.exit(f"error: {e}")
 
     # PGS pass (re-mux source bitmap subs as VobSub into a sibling .m4v)
     if not args.skip_pgs:
@@ -299,7 +325,7 @@ def main_convert(argv: list[str]) -> None:
     if not args.no_metadata:
         summary |= _tag(dst, args)
 
-    _print_summary(summary, as_json=args.json)
+    _print_summary(summary, title="convert summary", as_json=args.json)
 
 
 def main_tag(argv: list[str]) -> None:
@@ -312,13 +338,13 @@ def main_tag(argv: list[str]) -> None:
     path = Path(args.file).expanduser().resolve()
     summary: dict[str, object] = {"file": str(path)}
     summary |= _tag(path, args)
-    _print_summary(summary, as_json=args.json)
+    _print_summary(summary, title="tag summary", as_json=args.json)
 
 
 def _add_metadata_args(parser: argparse.ArgumentParser) -> None:
     """Apple TV lookup options shared by `convert` and `tag`."""
     parser.add_argument("--metadata-id", help="Apple TV content id (skip search).")
-    parser.add_argument("--storefront", default="US", help="Country code (US, GB, AU, ...).")
+    parser.add_argument("--storefront", type=_storefront, default="US", help="Country code (US, GB, AU, ...).")
     parser.add_argument("--language", default=None, help="Locale, e.g. en_US.")
     parser.add_argument("--non-interactive", action="store_true", help="Auto-pick top metadata hit.")
     parser.add_argument("--show", help="Override show name (forces TV mode).")
@@ -343,10 +369,10 @@ def _tag(path: Path, args: argparse.Namespace) -> dict[str, object]:
     return {"metadata": tagger.apply(path, meta), "matched_title": meta.title}
 
 
-def _print_summary(summary: dict[str, object], *, as_json: bool) -> None:
+def _print_summary(summary: dict[str, object], *, title: str, as_json: bool) -> None:
     if as_json:
         print(json.dumps(summary, indent=2, sort_keys=True, default=str))
         return
-    print("# convert summary\n")
+    print(f"# {title}\n")
     for k, v in summary.items():
         print(f"- **{k}**: `{v}`")
