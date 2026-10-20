@@ -607,7 +607,7 @@ class LogCapture:
 
     def __init__(self, predicate: str | None = None, raw_event_limit: int = 5000) -> None:
         self.raw_event_limit = max(0, raw_event_limit)
-        self.events: deque[dict[str, Any]] | list[dict[str, Any]] = deque(maxlen=self.raw_event_limit)
+        self.events: deque[dict[str, Any]] = deque(maxlen=self.raw_event_limit)
         self.event_count = 0
         self._hls_seen = False
         self._last_hls_variant: dict[str, Any] | None = None
@@ -711,11 +711,7 @@ class LogCapture:
     def add_event(self, event: dict[str, Any]) -> None:
         self.event_count += 1
         self._record_summary_event(event)
-        if self.raw_event_limit <= 0:
-            return
         self.events.append(event)
-        if isinstance(self.events, list) and len(self.events) > self.raw_event_limit:
-            del self.events[: len(self.events) - self.raw_event_limit]
 
     def _record_summary_event(self, event: dict[str, Any]) -> None:
         pipeline_engine = event.get("pipeline_engine")
@@ -766,10 +762,10 @@ class LogCapture:
 
     def summarize(self) -> dict[str, Any]:
         retained_events = list(self.events)
-        total_events = self.event_count or len(retained_events)
+        total_events = self.event_count
         events_returned = len(retained_events)
-        events_dropped = max(0, total_events - events_returned)
-        if not retained_events and not self.event_count:
+        events_dropped = total_events - events_returned
+        if not self.event_count:
             return {
                 "started_at": self._started_at,
                 "duration_s": time.time() - self._started_at if self._started_at else 0,
@@ -782,48 +778,18 @@ class LogCapture:
                 "predicate": self.predicate,
             }
 
-        if self.event_count:
-            hls_variants = [self._last_hls_variant] if self._last_hls_variant else []
-            last_variant = self._last_hls_variant
-            codec_events = [self._last_codec] if self._last_codec else []
-            last_codec = self._last_codec
-            audio_events = [self._last_audio] if self._last_audio else []
-            last_audio = self._last_audio
-            best_audio = self._best_audio
-            observed_audio = self._observed_audio
-            file_events = [self._last_file] if self._last_file else []
-            last_file = self._last_file
-            renderer_events = self._renderer_events
-            pipeline_engines = self._pipeline_engines
-        else:
-            # Some tests build captures by assigning events directly. Preserve that
-            # compatibility path while live captures use compact aggregate state.
-            hls_variants = [e for e in retained_events if e["kind"] == "hls_variant"]
-            last_variant = hls_variants[-1] if hls_variants else None
-            codec_events = [e for e in retained_events if e["kind"] == "codec_type"]
-            last_codec = codec_events[-1] if codec_events else None
-            audio_events = [e for e in retained_events if e["kind"] == "audio_format"]
-            last_audio = audio_events[-1] if audio_events else None
-            best_audio = max(audio_events, key=_audio_rank) if audio_events else None
-            observed_audio = []
-            observed_audio_by_key: dict[tuple[Any, ...], dict[str, Any]] = {}
-            for audio_event in audio_events:
-                key = _audio_key(audio_event)
-                if key not in observed_audio_by_key:
-                    item = _audio_summary(audio_event)
-                    item["count"] = 0
-                    observed_audio_by_key[key] = item
-                    observed_audio.append(item)
-                observed_audio_by_key[key]["count"] += 1
-            file_events = [e for e in retained_events if e["kind"] == "file_player"]
-            last_file = file_events[-1] if file_events else None
-            renderer_events = [e for e in retained_events if e["kind"] == "renderer_hint"]
-            pipeline_events = [e for e in retained_events if e["kind"] == "pipeline_engine"]
-            pipeline_engines = _unique_keep_order(
-                [e["pipeline_engine"] for e in audio_events if e.get("pipeline_engine")]
-                + [e["pipeline_engine"] for e in hls_variants if e.get("pipeline_engine")]
-                + [e["pipeline_engine"] for e in pipeline_events if e.get("pipeline_engine")]
-            )
+        hls_variants = [self._last_hls_variant] if self._last_hls_variant else []
+        last_variant = self._last_hls_variant
+        codec_events = [self._last_codec] if self._last_codec else []
+        last_codec = self._last_codec
+        audio_events = [self._last_audio] if self._last_audio else []
+        last_audio = self._last_audio
+        best_audio = self._best_audio
+        observed_audio = self._observed_audio
+        file_events = [self._last_file] if self._last_file else []
+        last_file = self._last_file
+        renderer_events = self._renderer_events
+        pipeline_engines = self._pipeline_engines
 
         playback: dict[str, Any] = {
             "source": "hls" if hls_variants else ("local_file" if file_events else "unknown"),
@@ -874,7 +840,7 @@ class LogCapture:
 
         if renderer_events:
             playback["renderer_evidence"] = _renderer_summary(renderer_events, started_at=self._started_at)
-            if self.event_count and self._spatial_rendering_changed_count:
+            if self._spatial_rendering_changed_count:
                 playback["renderer_evidence"]["spatial_rendering_changed_count"] = self._spatial_rendering_changed_count
         playback["capture_quality"] = _capture_quality(
             codec_events=codec_events,
