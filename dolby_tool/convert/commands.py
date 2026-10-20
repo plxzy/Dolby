@@ -81,7 +81,7 @@ _TRANSFER = {
 _MATRIX = {"bt709": 1, "unknown": 2, "fcc": 4, "bt470bg": 5, "smpte170m": 6, "bt2020nc": 9, "bt2020c": 10}
 
 
-def _resolve_colr_args(args, src: Path) -> tuple[int, int, int, bool] | None:
+def _resolve_colr_args(args: argparse.Namespace, src: Path) -> tuple[int, int, int, bool] | None:
     """Return (primaries, transfer, matrix, full_range) or None when not patching.
 
     Refuses to fall back to an SDR default: ambiguity is reported and skipped
@@ -216,13 +216,7 @@ def main_convert(argv: list[str]) -> None:
     parser.add_argument("output", help="Output .m4v path.")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--no-metadata", action="store_true", help="Skip Apple TV metadata lookup.")
-    parser.add_argument("--metadata-id", help="Apple TV content id (skip search).")
-    parser.add_argument("--storefront", default="US", help="Country code (US, GB, AU, ...).")
-    parser.add_argument("--language", default=None, help="Locale, e.g. en_US.")
-    parser.add_argument("--non-interactive", action="store_true", help="Auto-pick top metadata hit.")
-    parser.add_argument("--show", help="Override show name (forces TV mode).")
-    parser.add_argument("--season", type=int, help="Override season number.")
-    parser.add_argument("--episode", type=int, help="Override episode number.")
+    _add_metadata_args(parser)
     parser.add_argument("--skip-pgs", action="store_true", help="Don't try PGS→VobSub conversion.")
     # `colr` patching is intentionally explicit. There is NO safe default
     # because writing BT.709/SDR values into an HDR10 or Dolby Vision file
@@ -303,21 +297,7 @@ def main_convert(argv: list[str]) -> None:
         summary["dec3_joc_patched"] = atoms.patch_dec3_joc(dst)
 
     if not args.no_metadata:
-        meta = resolve_metadata(
-            str(src),
-            storefront=args.storefront,
-            language=args.language,
-            content_id=args.metadata_id,
-            interactive=not args.non_interactive and sys.stdin.isatty(),
-            show_override=args.show,
-            season_override=args.season,
-            episode_override=args.episode,
-        )
-        if meta is not None:
-            summary["metadata"] = tagger.apply(dst, meta)
-            summary["matched_title"] = meta.title
-        else:
-            summary["metadata"] = {"applied": False, "reason": "no match / skipped"}
+        summary |= _tag(dst, args)
 
     _print_summary(summary, as_json=args.json)
 
@@ -325,17 +305,29 @@ def main_convert(argv: list[str]) -> None:
 def main_tag(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(prog="dolby-tool tag")
     parser.add_argument("file", help="Existing .m4v/.mp4 to tag in place.")
-    parser.add_argument("--metadata-id", help="Apple TV content id.")
-    parser.add_argument("--storefront", default="US")
-    parser.add_argument("--language", default=None)
-    parser.add_argument("--non-interactive", action="store_true")
-    parser.add_argument("--show", help="Override show name (forces TV mode).")
-    parser.add_argument("--season", type=int, help="Override season number.")
-    parser.add_argument("--episode", type=int, help="Override episode number.")
+    _add_metadata_args(parser)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
     path = Path(args.file).expanduser().resolve()
+    summary: dict[str, object] = {"file": str(path)}
+    summary |= _tag(path, args)
+    _print_summary(summary, as_json=args.json)
+
+
+def _add_metadata_args(parser: argparse.ArgumentParser) -> None:
+    """Apple TV lookup options shared by `convert` and `tag`."""
+    parser.add_argument("--metadata-id", help="Apple TV content id (skip search).")
+    parser.add_argument("--storefront", default="US", help="Country code (US, GB, AU, ...).")
+    parser.add_argument("--language", default=None, help="Locale, e.g. en_US.")
+    parser.add_argument("--non-interactive", action="store_true", help="Auto-pick top metadata hit.")
+    parser.add_argument("--show", help="Override show name (forces TV mode).")
+    parser.add_argument("--season", type=int, help="Override season number.")
+    parser.add_argument("--episode", type=int, help="Override episode number.")
+
+
+def _tag(path: Path, args: argparse.Namespace) -> dict[str, object]:
+    """Look up Apple TV metadata for `path` and write it in place; returns summary entries."""
     meta = resolve_metadata(
         str(path),
         storefront=args.storefront,
@@ -346,13 +338,9 @@ def main_tag(argv: list[str]) -> None:
         season_override=args.season,
         episode_override=args.episode,
     )
-    summary: dict[str, object] = {"file": str(path)}
     if meta is None:
-        summary["metadata"] = {"applied": False, "reason": "no match / skipped"}
-    else:
-        summary["matched_title"] = meta.title
-        summary["metadata"] = tagger.apply(path, meta)
-    _print_summary(summary, as_json=args.json)
+        return {"metadata": {"applied": False, "reason": "no match / skipped"}}
+    return {"metadata": tagger.apply(path, meta), "matched_title": meta.title}
 
 
 def _print_summary(summary: dict[str, object], *, as_json: bool) -> None:
