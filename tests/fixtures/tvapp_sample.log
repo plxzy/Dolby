@@ -1,0 +1,60 @@
+Filtering the log data using "process == "mediaplaybackd" OR process == "VTDecoderXPCService" OR process == "coremediaxpc" OR process == "audiomxd" OR process == "TV""
+Timestamp               Ty Process[PID:TID]
+2026-05-24 20:14:02.118 Df TV[1287:2a4e1] [com.apple.TV:playback] play> Preparing downloaded item '<private>' for playback
+2026-05-24 20:14:02.204 Df TV[1287:2a4e1] [com.apple.TV:playback] play> Local asset available, playing offline HLS package
+2026-05-24 20:14:02.391 Df TV[1287:2a4f1] [com.apple.coremedia:player] <<<< FigStreamPlayer >>>> FigPlayerStreamCreateWithOptions: [0x7b1f2c000|P/IN] created player
+2026-05-24 20:14:02.402 Df mediaplaybackd[631:2a4f6] [com.apple.coremedia:asset] <<<< FigAsset >>>> created offline asset '<private>'
+2026-05-24 20:14:02.517 Df TV[1287:2a4e8] [com.apple.coreaudio:SpatialMgr] SpatializationManager.cpp:184   Spatial info for binding = Default-Output: {
+    App = TV
+    Route = AirPods Pro
+    contentType = 'moov'
+    overrideSpatialMode = 0
+    preferencesVersion = 1
+
+    Spatial preferences: {
+        prefersHeadTrackedSpatialization = 1
+        prefersLossyAudioSources = 0
+        maxSpatializableChannels = 16
+        alwaysSpatialize = 0
+        spatialAudioSourceCount = 1
+        spatialAudioSources = [ 'mlti' ]
+    }
+}
+2026-05-24 20:14:02.733 Df TV[1287:2a4f1] [com.apple.coremedia:player] <<<< FigStreamPlayer >>>> fpfs_ReportVariantSwitchStart: [0x7b1f2c000|P/IN] <0x7b0e81a00|I/OIU.01>: (0): starting switch to [<FigAlternate(441):[0x7b2c4d000] [Peak/Avg 23415872/15234567] [3840x1606] [AudioGroup audio-atmos_download-ap-aoc.tv.apple.com] [SubtitleGroup subtitles_download-ap-aoc.tv.apple.com] [dvh1.05.06,ec-3] [VideoRange PQ] [HDCP Type1] [FrameRate 23.976] [Pathway ap]>]
+2026-05-24 20:14:02.741 Df TV[1287:2a4e1] [com.apple.TV:cmplayer] play> avcff> AVCFPlayerItemSetAllowedAudioSpatializationFormats for playerItem 0x7b0e81a00: 0x7
+2026-05-24 20:14:02.958 Df coremediaxpc[1291:2a512] [com.apple.coremedia:formatreader] Video format: Dolby Vision profile 5, level 6, PQ transfer, BT.2020 primaries
+2026-05-24 20:14:03.012 Df VTDecoderXPCService[1290:2a5c3] [com.apple.videotoolbox:decoder] CodecType: dvh1 (HW decoder), DecodedPixelBuffer: &xv0, 3840 x 1606
+2026-05-24 20:14:03.013 Df VTDecoderXPCService[1290:2a5c3] [com.apple.videotoolbox:decoder] HEVC SPS: luma depth 10 chroma format 1
+2026-05-24 20:14:03.120 I  TV[1287:2a530] [com.apple.coreaudio:ac] ACDDPAtmosDecoder.cpp:383   (0x7a91c4040) subType = 'ec+3', inputFormat = 0x7b3d08a00, outputFormat = 0x7b3e1c2f0
+2026-05-24 20:14:03.121 I  TV[1287:2a530] [com.apple.coreaudio:ac] ACDDPAtmosDecoder.cpp:384   (0x7a91c4040) mIsAtmos = 1, mIsTVOS = 0, mIsOARMode = 1
+2026-05-24 20:14:03.164 Db TV[1287:2a530] [com.apple.coreaudio:AQClient] AQ_API_V2Impl.cpp:132 AudioQueueNew: ->AudioQueueNewOutput 16 ch, 48000 Hz, ec+3 (0x00000000) 0 bits/channel
+2026-05-24 20:14:03.179 Df TV[1287:2a530] [com.apple.coreaudio:AQ] AudioQueueObject.cpp:1085 Forcing 7.1.4 decoder for Atmos
+2026-05-24 20:14:03.205 Df TV[1287:2a530] [com.apple.coreaudio:aqme] MEMixerChannel.cpp:3300  mFormatID='ec+3', mNumChannels=16, mBestAvailableContentType=3, mContentspatializable=1, mSpatializationStatus=2, err=0
+2026-05-24 20:14:03.231 Df audiomxd[402:2a61c] [com.apple.coreaudio:AUSpatialMixerV2] [0x8a3c19e2|SetAudioChannelLayout] [InputElement #0] Setting audio channel layout Atmos_7_1_4
+2026-05-24 20:14:03.233 Df audiomxd[402:2a61c] [com.apple.coreaudio:AUSpatialMixerV2] [0x8a3c19e2|InputElement #0|InitializeChannelProcessors] Initializing 12 channel processors
+2026-05-24 20:14:03.240 Df audiomxd[402:2a61c] [com.apple.coreaudio:AUSpatialMixerV2] [0x8a3c19e2|Initialize] output: binaural, head-tracked
+2026-05-24 20:14:03.287 Df TV[1287:2a4e8] [com.apple.coreaudio:SpatialMgr] SpatializationManager.cpp:1735  Logging power event: pid = 1287, name = TV, spatialization = 1, stereoUpmix = 0, headTracking = 1
+2026-05-24 20:14:03.301 Df TV[1287:2a4e1] [com.apple.TV:ampplay] play> cm>> mediaFormatinfo '<private>' , audioCapabilities: 0x8 -> 0x1, 0x8 -> 0x1, asbdFormatID = ec+3, Dolby Atmos, asbdNumChannels = 16, asbdSampleRate = 48.0 kHz, is rendering spatial audio
+2026-05-24 20:14:03.302 Df TV[1287:2a4f9] [com.apple.TV:cmplayer] play> avcff> noti> 'AVCFPlayerItemSpatialAudioRenderingDidChangeNotification' ppi=0x7b0e81a00 '<private>'
+2026-05-24 20:14:03.318 Df TV[1287:2a4f1] [com.apple.coremedia:player] <<<< FigStreamPlayer >>>> fpfs_ReportAudioPlaybackThroughFigLog: [QE Critical][0x7b1f2c000|P/IN]: <0x7b0e81a00|I/OIU.01>: [AudioFormat ec+3 is  decodable] [AudioChannels 16] [Spatialization Eligible yes] [Client permits multi: yes, stereo: no] [Spatialization yes] [StereoSpatialization no] [Rendition Multichannel] [SampleRate 48000]
+2026-05-24 20:14:03.402 Df TV[1287:2a4f1] [com.apple.coremedia:player] <<<< FigStreamPlayer >>>> fpfs_ReportVideoPlaybackTimeThroughFigLog: [QE Critical][0x7b1f2c000|P/IN]: <0x7b0e81a00|I/OIU.01>: (0): (re)started playback; desiredRate is 1 started at 0
+2026-05-24 20:14:03.410 Df TV[1287:2a4e1] [com.apple.TV:playback] play> Playback state changed: playing
+2026-05-24 20:14:03.596 Df coremediaxpc[1291:2a512] [com.apple.coremedia:display] HDR output: Dolby Vision, EDR headroom available
+2026-05-24 20:14:08.512 Df TV[1287:2a4e8] [com.apple.coreaudio:SpatialMgr] SpatializationManager.cpp:184   Spatial info for binding = Default-Output: {
+    App = TV
+    Route = AirPods Pro
+    contentType = 'moov'
+    overrideSpatialMode = 0
+    preferencesVersion = 1
+
+    Spatial preferences: {
+        prefersHeadTrackedSpatialization = 1
+        prefersLossyAudioSources = 0
+        maxSpatializableChannels = 16
+        alwaysSpatialize = 0
+        spatialAudioSourceCount = 1
+        spatialAudioSources = [ 'mlti' ]
+    }
+}
+2026-05-24 20:14:08.530 Df TV[1287:2a4e8] [com.apple.coreaudio:SpatialMgr] SpatializationManager.cpp:1735  Logging power event: pid = 1287, name = TV, spatialization = 1, stereoUpmix = 0, headTracking = 1
+2026-05-24 20:14:12.004 Df TV[1287:2a4f1] [com.apple.coremedia:player] <<<< FigStreamPlayer >>>> fpfs_ReportVideoPlaybackTimeThroughFigLog: [QE Critical][0x7b1f2c000|P/IN]: <0x7b0e81a00|I/OIU.01>: (0): playing at rate 1; 0 stalls

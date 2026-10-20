@@ -1,7 +1,18 @@
 """Playback summaries: HLS/DV/audio verdicts, renderer evidence and Markdown."""
 
-from dolby_tool.capture import LogCapture, parse_line, summarize_log_lines, tvlog_summary_markdown
+from pathlib import Path
+
+from dolby_tool.capture import (
+    PREDICATE,
+    LogCapture,
+    parse_line,
+    summarize_log_file,
+    summarize_log_lines,
+    tvlog_summary_markdown,
+)
 from dolby_tool.capture.summary import SUMMARY_RENDERER_EVENT_LIMIT, CaptureState
+
+SAMPLE_LOG = Path(__file__).parents[1] / "fixtures" / "tvapp_sample.log"
 
 
 def test_movpkg_selected_stereo_with_atmos_evidence_gets_verdict():
@@ -564,3 +575,57 @@ def test_renderer_dedup_stops_remembering_keys_once_the_evidence_list_is_full():
 
     assert len(state.renderer_events) == SUMMARY_RENDERER_EVENT_LIMIT
     assert len(state._renderer_keys) == SUMMARY_RENDERER_EVENT_LIMIT
+
+
+# ---------------------------------------------------------------------------
+# saved logs
+
+
+def test_tvapp_sample_log_summarizes_dolby_vision_with_spatial_atmos():
+    summary = summarize_log_file(SAMPLE_LOG)
+    playback = summary["playback"]
+    renderer = playback["renderer_evidence"]
+
+    assert summary["event_count"] == 30
+    assert summary["predicate"] == PREDICATE
+    assert playback["source"] == "hls"
+    assert playback["pipeline_engine"] == "FigStreamPlayer"
+    assert playback["hls_delivery"] == "downloaded_movpkg"
+    assert playback["selected_hls_audio_group_kind"] == "atmos"
+    assert playback["downloaded_hls_verdict"] == "movpkg_atmos_variant_selected"
+    assert (playback["video_fourcc"], playback["decoded_fourcc"]) == ("dvh1", "dvh1")
+    assert playback["decoded_resolution"] == "3840x1606"
+    assert playback["dolby_vision_active"] is True
+    assert playback["audio"] == {
+        "format": "ec+3",
+        "channels": 16,
+        "sample_rate": 48000,
+        "spatialization": "yes",
+        "spatialization_eligible": "yes",
+        "decodable": True,
+        "is_atmos": True,
+    }
+    assert playback["best_audio"] == playback["audio"]
+    assert playback["capture_quality"]["label"] == "complete"
+    assert renderer["verdict"] == "app_spatial_rendering_active"
+    assert renderer["lower_level_spatialization_active"] is True
+    assert renderer["route_capability_label"] == "headphones"
+    assert renderer["route_spatial_capable"] is True
+    assert renderer["head_tracking_active"] is True
+    assert renderer["auspatial_channel_layouts"] == ["Atmos_7_1_4"]
+    assert renderer["spatial_rendering_changed_count"] == 1
+
+
+def test_tvapp_sample_log_renders_markdown():
+    rendered = tvlog_summary_markdown(summarize_log_file(SAMPLE_LOG))
+
+    assert "- downloaded HLS verdict: `movpkg_atmos_variant_selected`" in rendered
+    assert "- current audio: `ec+3 ch=16 48000 Hz spatialization=yes`" in rendered
+    assert "- renderer verdict: `app_spatial_rendering_active`" in rendered
+
+
+def test_tvapp_sample_log_is_sanitised():
+    text = SAMPLE_LOG.read_text(encoding="utf-8")
+
+    assert "/Users/" not in text
+    assert "@" not in text
