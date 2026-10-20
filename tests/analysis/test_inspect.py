@@ -160,3 +160,83 @@ def test_inspect_surfaces_the_warning(media_file, monkeypatch):
     assert video.dolby_vision.profile == "7"
     assert video.fourcc_warning is not None
     assert "profile 7" in video.fourcc_warning
+
+
+_HDR10_X265 = (
+    "hdr10=1:repeat-headers=1:log-level=error:max-cll=1000,400:"
+    "master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1)"
+)
+
+
+@pytest.mark.requires_ffmpeg
+def test_hdr10_hevc_with_eac3_clip(media_clip):
+    clip = media_clip(
+        "hdr10.mp4",
+        "-c:v", "libx265", "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1",
+        "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
+        "-x265-params", _HDR10_X265,
+        "-c:a", "eac3", "-b:a", "640k", "-ac", "6",
+    )  # fmt: skip
+
+    spec = inspect_file(str(clip))
+
+    assert spec.filename == "hdr10.mp4"
+    video = spec.video
+    assert (video.codec, video.fourcc, video.pix_fmt) == ("hevc", "hvc1", "yuv420p10le")
+    assert (video.color_primaries, video.color_transfer, video.color_space) == ("bt2020", "smpte2084", "bt2020nc")
+    assert (video.hdr10.mdcv, video.hdr10.cll) == (True, True)
+    assert video.dolby_vision.model_dump() == {"present": False}
+    assert not video.hdr10_plus
+    assert video.fourcc_warning is None
+    assert (video.resolution, video.fps) == ("640x360", 24.0)
+
+    [audio] = spec.audio
+    assert (audio.codec, audio.channels, audio.sample_rate_hz) == ("eac3", 6, 48000)
+    assert audio.default
+    assert audio.atmos in (False, None)  # plain E-AC-3: never Atmos, "unknown" without mediainfo
+    assert spec.subtitles == []
+
+
+@pytest.mark.requires_ffmpeg
+def test_h264_aac_clip_with_a_subtitle_track(media_clip, tmp_path):
+    srt = tmp_path / "subs.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:00,800\nHello\n", encoding="utf-8")
+    clip = media_clip(
+        "subs.mp4",
+        "-map", "0:v", "-map", "1:a", "-map", "2:s",
+        "-c:v", "libx264", "-c:a", "aac", "-c:s", "mov_text",
+        "-metadata:s:s:0", "language=eng",
+        "-disposition:s:0", "default+hearing_impaired",
+        inputs=(
+            "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=24",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+            "-i", str(srt),
+        ),
+    )  # fmt: skip
+
+    spec = inspect_file(str(clip))
+
+    assert (spec.video.codec, spec.video.fourcc) == ("h264", "avc1")
+    assert not spec.video.hdr10.present
+    assert spec.audio[0].codec == "aac"
+    [subtitle] = spec.subtitles
+    assert (subtitle.codec, subtitle.language) == ("mov_text", "eng")
+    assert (subtitle.default, subtitle.hearing_impaired, subtitle.forced) == (True, True, False)
+    assert subtitle.index == spec.audio[0].index + 1
+
+
+@pytest.mark.requires_ffmpeg
+def test_hevc_tagged_hvc1_is_not_reported_as_dolby_vision(media_clip):
+    spec = inspect_file(str(media_clip("sdr_hevc.mp4", "-c:v", "libx265", "-tag:v", "hvc1", "-c:a", "aac")))
+
+    assert spec.video.fourcc == "hvc1"
+    assert spec.video.dolby_vision.present is False
+    assert spec.video.fourcc_warning is None
+
+
+@pytest.mark.requires_ffmpeg
+def test_file_without_video_raises(media_clip):
+    clip = media_clip("audio_only.m4a", "-vn", "-c:a", "aac")
+
+    with pytest.raises(InspectError, match="no video stream"):
+        inspect_file(str(clip))
