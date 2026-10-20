@@ -155,6 +155,7 @@ def package_hls_from_file(
 
 
 def package_hls_summary_markdown(summary: dict[str, object]) -> str:
+    """Render a `package_hls_from_file` summary as the Markdown `hls-package` prints."""
     lines = ["# Local HLS package summary\n"]
     lines.append(f"- source: `{summary['source']}`")
     lines.append(f"- output: `{summary['output_dir']}`")

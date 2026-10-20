@@ -72,6 +72,7 @@ def prepare_hls_from_movpkg(
 
 
 def prepare_hls_summary_markdown(summary: dict[str, object]) -> str:
+    """Render a `prepare_hls_from_movpkg` summary as the Markdown `hls-prepare` prints."""
     lines = ["# Local HLS prepare summary\n"]
     lines.append(f"- source: `{summary['source']}`")
     lines.append(f"- output: `{summary['output_dir']}`")

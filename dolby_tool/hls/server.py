@@ -80,6 +80,10 @@ class RangeRequestHandler(SimpleHTTPRequestHandler):
             remaining -= len(chunk)
 
     def _parse_range(self, size: int) -> tuple[int | None, int]:
+        """The `(start, end)` byte range requested, or `(None, size - 1)` without a Range header.
+
+        Malformed and multi-range headers come back as an unsatisfiable range (answered with 416).
+        """
         header = self.headers.get("Range")
         if not header:
             return None, size - 1
