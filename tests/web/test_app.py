@@ -15,6 +15,7 @@ from dolby_tool.web.routes import capture as capture_routes
 
 FIXTURES = Path(__file__).parents[1] / "fixtures"
 LOCAL = "http://127.0.0.1:7878"
+WS_URL = "ws://127.0.0.1:7878/ws/tvlog"  # websocket_connect ignores base_url
 
 
 @pytest.fixture
@@ -174,7 +175,7 @@ def test_cross_origin_unsafe_requests_are_rejected(client, tmp_path):
 def test_cross_origin_websocket_is_rejected(client):
     with (
         pytest.raises(WebSocketDisconnect) as exc,
-        client.websocket_connect("/ws/tvlog", headers={"origin": "http://evil.example"}) as ws,
+        client.websocket_connect(WS_URL, headers={"origin": "http://evil.example"}) as ws,
     ):
         ws.receive_json()
     assert exc.value.code == 1008
@@ -218,7 +219,7 @@ def fake_capture(monkeypatch):
 
 
 def test_websocket_capture_round_trip(client, fake_capture):
-    with client.websocket_connect("/ws/tvlog", headers={"origin": LOCAL}) as ws:
+    with client.websocket_connect(WS_URL, headers={"origin": LOCAL}) as ws:
         ws.send_json({"cmd": "ping"})
         assert ws.receive_json() == {"type": "pong"}
         ws.send_json({"cmd": "start"})
@@ -236,7 +237,7 @@ def test_websocket_capture_round_trip(client, fake_capture):
 
 def test_websocket_reports_missing_log_binary(client, fake_capture):
     fake_capture.fail_with = FileNotFoundError("log")
-    with client.websocket_connect("/ws/tvlog") as ws:
+    with client.websocket_connect(WS_URL) as ws:
         ws.send_json({"cmd": "start"})
         error = ws.receive_json()
     assert error["type"] == "error"
@@ -244,7 +245,7 @@ def test_websocket_reports_missing_log_binary(client, fake_capture):
 
 
 def test_websocket_rejects_unknown_and_malformed_messages(client, fake_capture):
-    with client.websocket_connect("/ws/tvlog") as ws:
+    with client.websocket_connect(WS_URL) as ws:
         ws.send_json({"cmd": "dance"})
         assert ws.receive_json() == {"type": "error", "message": "unknown cmd: dance"}
         ws.send_text("not json")
@@ -252,7 +253,7 @@ def test_websocket_rejects_unknown_and_malformed_messages(client, fake_capture):
 
 
 def test_disconnect_and_shutdown_stop_running_captures(fake_capture):
-    with TestClient(create_app(), base_url=LOCAL) as client, client.websocket_connect("/ws/tvlog") as ws:
+    with TestClient(create_app(), base_url=LOCAL) as client, client.websocket_connect(WS_URL) as ws:
         ws.send_json({"cmd": "start"})
         ws.receive_json()
     # leaving the socket (and shutting the app down) stops the capture it owned
