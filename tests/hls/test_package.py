@@ -286,6 +286,23 @@ def test_video_range_follows_the_transfer_function(tmp_path, source, fake_tools,
     assert f"VIDEO-RANGE={expected}\n" in (output / "master.m3u8").read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize(
+    ("video", "expected"),
+    [
+        pytest.param({"codec_tag_string": "dvh1", "side_data_list": [dovi(8, 6, 1)]}, "dvh1.08.06", id="dvh1-8.1"),
+        pytest.param({"codec_tag_string": "dvhe", "side_data_list": [dovi(5, 9, 0)]}, "dvhe.05.09", id="dvhe-5"),
+        pytest.param({"codec_tag_string": "dvh1"}, "dvh1.05.06", id="no-record-falls-back"),
+        pytest.param({"codec_tag_string": "hvc1", "side_data_list": [dovi(8, 6, 1)]}, "hvc1", id="hvc1-tagged"),
+    ],
+)
+def test_dolby_vision_codec_comes_from_the_configuration_record(tmp_path, source, fake_tools, video, expected):
+    fake_tools.streams = [{"codec_type": "video", **video}, ATMOS_EAC3]
+
+    summary = package_hls_from_file(source, tmp_path / "out")
+
+    assert summary["master_playlist_tags"]["codecs"] == f"{expected},ec-3"
+
+
 @pytest.mark.requires_ffmpeg
 def test_hlg_clip_is_labelled_hlg(tmp_path, media_clip):
     clip = media_clip(

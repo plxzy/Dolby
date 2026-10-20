@@ -64,7 +64,7 @@ class MasterTags:
     @classmethod
     def for_streams(cls, video: dict[str, Any], audio: dict[str, Any]) -> Self:
         dolby_vision = DolbyVision.from_stream(video)
-        codecs = ",".join(codec for codec in (_video_codec(video), _audio_codec(audio)) if codec)
+        codecs = ",".join(codec for codec in (_video_codec(video, dolby_vision), _audio_codec(audio)) if codec)
         return cls(
             codecs=codecs or None,
             audio_channels=_audio_channels(audio),
@@ -253,13 +253,14 @@ def _patch_master_playlist(path: Path, tags: MasterTags) -> None:
     path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
 
 
-def _video_codec(stream: dict[str, Any]) -> str | None:
+def _video_codec(stream: dict[str, Any], dolby_vision: DolbyVision | None) -> str | None:
     tag = str(stream.get("codec_tag_string") or "").lower()
     if tag in _DV_HEVC_TAGS:
-        # Current local Atmos/DV test files are Profile 5 Level 6. Keep the
-        # explicit HLS codec token because QuickTime rejects FFmpeg's bare
-        # split fMP4 master playlist before segment playback.
-        return f"{tag}.05.06"
+        # QuickTime rejects FFmpeg's bare split fMP4 master playlist for Dolby Vision before segment
+        # playback; it needs the full `dvh1.PP.LL` token. Without a configuration record, assume
+        # profile 5 level 6 (what the Atmos/DV test files are).
+        profile, level = (dolby_vision.profile, dolby_vision.level) if dolby_vision else (5, 6)
+        return f"{tag}.{profile:02d}.{level:02d}"
     return tag or None
 
 
