@@ -13,9 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from ..analysis.compare import compare_files
-from ..analysis.inspect import InspectError, inspect_file
-from ..capture.tvlog import PREDICATE, LogCapture
+from ..analysis import InspectError, compare_files, inspect_file
+from ..capture import PREDICATE, LogCapture
 
 WEB_DIR = Path(__file__).parent / "static"
 

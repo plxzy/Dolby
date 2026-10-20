@@ -8,15 +8,18 @@ import time
 
 import uvicorn
 
-from .capture.tvlog import (
+from .capture import (
     LOCAL_PLAYER_PREDICATE,
     PREDICATE,
     LogCapture,
     summarize_log_file,
     tvlog_summary_markdown,
 )
-from .hls.local_hls import (
+from .hls import (
+    analyze_movpkg,
     create_hls_server,
+    movpkg_scan_markdown,
+    movpkg_summary_markdown,
     open_hls_url,
     package_hls_from_file,
     package_hls_summary_markdown,
@@ -24,11 +27,6 @@ from .hls.local_hls import (
     prepare_hls_from_movpkg,
     prepare_hls_summary_markdown,
     running_hls_server,
-)
-from .hls.movpkg import (
-    analyze_movpkg,
-    movpkg_scan_markdown,
-    movpkg_summary_markdown,
     scan_movpkgs,
 )
 
