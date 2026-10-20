@@ -1,10 +1,11 @@
 """MKV → Apple-TV-compatible .m4v stream-copy mux via ffmpeg.
 
-Design: do as little as possible during mux. We `-c copy` video and audio so
-HEVC/H.264 + AC-3/EAC-3/AC-4 passthrough is bit-exact; text subtitles are
-converted to `mov_text` (the only sub codec MP4 natively supports), and PGS
-bitmap subtitles are stripped here and re-injected by `subs_pgs.py` in a
-second pass.
+Design: do as little as possible during mux. We `-c copy` video and the audio
+tracks Apple players can decode, so HEVC/H.264 + AC-3/EAC-3/AC-4 passthrough
+is bit-exact; audio Apple can't play from MP4 (TrueHD, DTS, PCM, …) is skipped
+and reported. Text subtitles are converted to `mov_text` (the only sub codec
+MP4 natively supports), and PGS bitmap subtitles are stripped here and
+re-injected by `subs_pgs.py` in a second pass.
 
 Optional `atoms.py` post-mux patches are available but NOT required for TV.app
 spatial playback on current builds — the 2026-05-23 N2-probe baseline (see
@@ -13,11 +14,16 @@ without dec3/colr patching. Treat the patchers as last-resort knobs for
 specific bitstream-mismatch cases, not as a default pipeline step.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 from ..common import ffprobe_json, run_tool, to_int
+
+# Audio codecs Apple players decode from MP4. Everything else (TrueHD/MLP, DTS,
+# PCM, Vorbis, …) is skipped: ffmpeg refuses or only experimentally supports
+# muxing it into MP4, and TV.app could not play it anyway.
+APPLE_AUDIO_CODECS = frozenset({"aac", "ac3", "eac3", "ac4", "alac", "flac", "mp3", "opus"})
 
 # Codec families we recognise during stream selection / reporting.
 _TEXT_SUB_CODECS = {"subrip", "ass", "ssa", "mov_text", "webvtt", "text"}
@@ -34,14 +40,24 @@ class StreamInfo:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class SkippedStream:
+    """A source stream the mux leaves out, and why."""
+
+    index: int
+    codec: str
+    reason: str
+
+
 @dataclass
 class ProbeResult:
     video: StreamInfo
-    audios: list[StreamInfo]
+    audios: list[StreamInfo]  # only codecs Apple players can play from MP4
     text_subs: list[StreamInfo]
     bitmap_subs: list[StreamInfo]
     has_chapters: bool
     raw: dict[str, Any]
+    skipped_audio: list[SkippedStream] = field(default_factory=list)
 
     def all_subs(self) -> list[StreamInfo]:
         return self.text_subs + self.bitmap_subs
@@ -53,6 +69,7 @@ def probe(source: Path) -> ProbeResult:
 
     video: StreamInfo | None = None
     audios: list[StreamInfo] = []
+    skipped_audio: list[SkippedStream] = []
     text_subs: list[StreamInfo] = []
     bitmap_subs: list[StreamInfo] = []
     for s in raw.get("streams", []):
@@ -66,8 +83,10 @@ def probe(source: Path) -> ProbeResult:
         )
         if info.codec_type == "video" and video is None and info.codec != "mjpeg":
             video = info
-        elif info.codec_type == "audio":
+        elif info.codec_type == "audio" and info.codec in APPLE_AUDIO_CODECS:
             audios.append(info)
+        elif info.codec_type == "audio":
+            skipped_audio.append(SkippedStream(info.index, info.codec, "not playable from MP4 by Apple players"))
         elif info.codec_type == "subtitle":
             if info.codec in _BITMAP_SUB_CODECS:
                 bitmap_subs.append(info)
@@ -82,25 +101,14 @@ def probe(source: Path) -> ProbeResult:
         bitmap_subs=bitmap_subs,
         has_chapters=bool(raw.get("chapters")),
         raw=raw,
+        skipped_audio=skipped_audio,
     )
 
 
-# Audio codec preference for the "best" track: object/immersive first, then
-# lossless, then lossy multichannel, then stereo lossy. Higher score wins.
-_CODEC_SCORE = {
-    "ac4": 100,
-    "eac3": 90,
-    "ac3": 80,
-    "truehd": 95,
-    "dts": 70,
-    "flac": 85,
-    "alac": 85,
-    "mlp": 95,
-    "opus": 60,
-    "aac": 50,
-    "mp3": 30,
-    "vorbis": 30,
-}
+# Preference among the Apple-playable codecs for the default track: Atmos-capable
+# first (E-AC-3 carries Atmos/JOC on every Apple device; AC-4 only on recent
+# ones), then lossless, then lossy multichannel, then stereo lossy.
+_CODEC_SCORE = {"eac3": 100, "ac4": 90, "alac": 80, "flac": 80, "ac3": 70, "opus": 50, "aac": 40, "mp3": 20}
 
 # Track-title keywords that indicate a non-primary track we should NOT pick
 # as the default (commentary, audio description, etc.).
@@ -138,8 +146,8 @@ def _default_audio_index(audios: list[StreamInfo]) -> int:
     """Pick the best primary audio track.
 
     Ranking (high→low): not commentary/AD, English language, codec quality
-    (AC-4 > EAC-3/TrueHD > AC-3 > AAC), channel count, source `default`
-    disposition, original index as tiebreaker.
+    (E-AC-3 > AC-4 > ALAC/FLAC > AC-3 > Opus > AAC > MP3), channel count,
+    source `default` disposition, original index as tiebreaker.
     """
     if not audios:
         return 0
@@ -183,6 +191,9 @@ def mux(
     output.parent.mkdir(parents=True, exist_ok=True)
 
     info = probe(source)
+    if info.skipped_audio and not info.audios:
+        skipped = ", ".join(f"#{s.index} {s.codec}" for s in info.skipped_audio)
+        raise ValueError(f"No audio track Apple players can play from MP4 in {source.name} (skipped: {skipped})")
     default_audio = _default_audio_index(info.audios)
 
     cmd: list[str] = [
@@ -201,9 +212,9 @@ def mux(
         f"0:{info.video.index}",
     ]
 
-    # All audio tracks, in source order.
-    for i, _ in enumerate(info.audios):
-        cmd += ["-map", f"0:a:{i}"]
+    # Playable audio tracks, in source order.
+    for a in info.audios:
+        cmd += ["-map", f"0:{a.index}"]
 
     # Map subtitles by absolute input stream index so codec-class splitting
     # doesn't reorder them (a `0:s:N` index refers to subtitle-only ordering
@@ -248,6 +259,7 @@ def mux(
         "video_codec": info.video.codec,
         "audio_streams": [{"codec": a.codec, "language": a.language} for a in info.audios],
         "default_audio_index": default_audio,
+        "audio_skipped": [asdict(s) for s in info.skipped_audio],
         "text_subs_included": len(info.text_subs),
         "bitmap_subs_dropped": 0 if include_bitmap_subs_as_passthrough else len(info.bitmap_subs),
         "chapters": info.has_chapters,
