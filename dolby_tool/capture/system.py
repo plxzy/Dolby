@@ -592,16 +592,19 @@ def _verdict(
 
 
 def _now_playing_fields(info: dict[str, Any]) -> dict[str, Any]:
+    """`nowplaying.m` output → summary fields. MRContentItemMetadata.mediaType is 2 for TV.app video."""
+    media_type = info.get("MediaType")
     return {
         "title": info.get("Title"),
         "album": info.get("Album"),
         "artist": info.get("Artist"),
-        "media_type": info.get("StrictMediaType") or info.get("MediaType"),
+        "media_type": "video" if media_type == 2 else media_type,
         "duration_s": _round(info.get("Duration")),
         "elapsed_s": _round(info.get("ElapsedTime")),
         "playback_rate": info.get("PlaybackRate"),
-        "is_playing": info.get("kMRMediaRemoteNowPlayingApplicationIsPlayingUserInfoKey"),
+        "is_playing": info.get("IsPlaying"),
         "app_pid": info.get("ApplicationPID"),
+        "bundle_id": info.get("BundleIdentifier"),
     }
 
 
