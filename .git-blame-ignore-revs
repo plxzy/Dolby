@@ -1,0 +1,3 @@
+# Bulk formatting commits — skipped by `git blame` (git config blame.ignoreRevsFile .git-blame-ignore-revs)
+# style: apply ruff format and drop redundant __future__ imports
+807d60e580f62744e65dfc8f627dcd7aa7a83873

@@ -1,7 +1,7 @@
 #!/usr/sbin/dtrace -s
 /*
  * spatial-probes.d — capture the AVF spatialization gate observed
- * against TV.app in reports/ISSUE_12_DTRACE_GATE.md, but against an
+ * against TV.app (see the dtrace evidence in reports/01_gate_model.md), but against an
  * arbitrary AVPlayer-using process (e.g. SpatialProbe).
  *
  * Usage:

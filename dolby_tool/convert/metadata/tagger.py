@@ -5,21 +5,24 @@ offset adjustments that come with re-writing the moov, knows the iTunes
 atom set, and is one `brew install atomicparsley` away. We don't try to
 re-implement it.
 
-Atom reference:
-  ©nam = name           ©day = release date         desc = description (≤255)
-  ldes = long desc      ©gen = genre                ©ART = artist (cast)
-  ©dir = director       ©wrt = writers              tvsh = show name
-  tvsn = season number  tves = episode number       tven = episode id
-  stik = media kind     hdvd = HD video             covr = cover art (jpg)
-  iTunEXTC = content rating string (e.g. "mpaa|PG-13|300|")
+Atoms written (AtomicParsley flag → iTunes atom):
+  --title ©nam            --year ©day             --description desc (≤255)
+  --longdesc ldes         --genre ©gen            --artist ©ART (cast)
+  --composer ©wrt         --stik stik (movie/TV)  --artwork covr (JPEG, ≤5)
+  --TVShowName tvsh       --TVNetwork tvnn        --TVSeasonNum tvsn
+  --TVEpisodeNum tves     --TVEpisode tven        --albumArtist aART
+  --album ©alb            --tracknum trkn         (library grouping of episodes)
+  --rDNSatom iTunEXTC     content rating string (e.g. "mpaa|PG-13|300|")
+Director, screenwriter and producer credits live in an iTunMOVI plist and are
+not written.
 """
-from __future__ import annotations
 
-import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
+import httpx
+
+from ...common import run_tool, which_any
 from .apple_tv import Metadata
 from .artwork import download
 
@@ -30,20 +33,21 @@ _STIK_MOVIE = "value=9"
 _STIK_TV = "value=10"
 
 
+def _atomicparsley() -> str | None:
+    return which_any("AtomicParsley", "atomicparsley")
+
+
 def have_atomicparsley() -> bool:
-    return shutil.which("AtomicParsley") is not None or shutil.which("atomicparsley") is not None
-
-
-def _bin() -> str:
-    return shutil.which("AtomicParsley") or shutil.which("atomicparsley") or "AtomicParsley"
+    return _atomicparsley() is not None
 
 
 def apply(path: Path, meta: Metadata) -> dict[str, object]:
     """Write metadata onto `path` in place. Returns a summary dict."""
-    if not have_atomicparsley():
+    atomicparsley = _atomicparsley()
+    if atomicparsley is None:
         return {"applied": False, "reason": "AtomicParsley not installed (brew install atomicparsley)"}
 
-    args: list[str] = [_bin(), str(path)]
+    args: list[str] = [atomicparsley, str(path)]
     fields_set: list[str] = []
 
     def add(flag: str, value: str | int | None) -> None:
@@ -81,8 +85,10 @@ def apply(path: Path, meta: Metadata) -> dict[str, object]:
     if meta.rating:
         # iTunEXTC content-rating string lives in a reverse-DNS atom.
         args += [
-            "--rDNSatom", meta.rating.itunes_extc(),
-            "name=iTunEXTC", "domain=com.apple.iTunes",
+            "--rDNSatom",
+            meta.rating.itunes_extc(),
+            "name=iTunEXTC",
+            "domain=com.apple.iTunes",
         ]
         fields_set.append("iTunEXTC")
 
@@ -92,7 +98,7 @@ def apply(path: Path, meta: Metadata) -> dict[str, object]:
         for i, art in enumerate(meta.artworks[:5]):  # cap at 5 to bound writes
             try:
                 blob = download(art.url)
-            except Exception:
+            except httpx.HTTPError, httpx.InvalidURL:
                 continue
             p = tmp / f"art_{i}.jpg"
             p.write_bytes(blob)
@@ -100,7 +106,7 @@ def apply(path: Path, meta: Metadata) -> dict[str, object]:
             add("--artwork", str(p))
 
         args += ["--overWrite"]
-        r = subprocess.run(args, capture_output=True, text=True)
+        r = run_tool(args, check=False)
         if r.returncode != 0:
             return {
                 "applied": False,
@@ -111,6 +117,6 @@ def apply(path: Path, meta: Metadata) -> dict[str, object]:
     return {
         "applied": True,
         "fields": sorted(set(fields_set)),
-        "artwork_count": len(artwork_paths) if 'artwork_paths' in dir() else 0,
+        "artwork_count": len(artwork_paths),
         "rating": meta.rating.itunes_extc() if meta.rating else None,
     }

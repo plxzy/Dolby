@@ -38,7 +38,7 @@ advertised Atmos group actually has local segments.
 
 ### Parser fields surfaced from earlier work
 
-`tvlog.py` already emits:
+The capture parser (`dolby_tool/capture/`) already emits:
 
 - `pipeline_engine` (FigFilePlayer / FigStreamPlayer)
 - `asbdFormatID` (`ec+3`, `qc+3`, `qaac`, etc.) separate from source/HLS
