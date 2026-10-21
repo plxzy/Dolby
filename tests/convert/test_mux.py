@@ -250,3 +250,26 @@ def test_partial_output_is_deleted_when_ffmpeg_fails(source, probe_streams, monk
     with pytest.raises(ToolError, match="boom"):
         mux.mux(source, output)
     assert not output.exists()
+
+
+@pytest.mark.parametrize("alias", ["same", "symlink", "hardlink"])
+def test_mux_rejects_input_aliases_before_running_tools(source, ffmpeg, alias) -> None:
+    source.write_bytes(b"original media")
+    output = source if alias == "same" else source.with_suffix(".m4v")
+    if alias == "symlink":
+        output.symlink_to(source)
+    elif alias == "hardlink":
+        output.hardlink_to(source)
+    with pytest.raises(ValueError, match="different files"):
+        mux.mux(source, output, overwrite=True)
+    assert source.read_bytes() == b"original media"
+    assert output.read_bytes() == b"original media"
+    assert ffmpeg == []
+
+
+def test_failure_cleanup_preserves_preexisting_output(tmp_path) -> None:
+    output = tmp_path / "existing.m4v"
+    output.write_bytes(b"previous conversion")
+    with pytest.raises(ToolError), mux.discard_on_failure(output):
+        raise ToolError("rejected before writing")
+    assert output.read_bytes() == b"previous conversion"

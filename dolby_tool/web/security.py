@@ -9,8 +9,8 @@ browser attacks matter even on 127.0.0.1:
 * Cross-site requests — any page may open `ws://127.0.0.1:7878/ws/tvlog` or fire
   a POST at us; WebSockets are not covered by the same-origin policy. Blocked by
   `OriginGuard`, which rejects WebSocket handshakes and unsafe HTTP methods whose
-  `Origin` names a host outside the allow-list. Requests without an Origin (curl,
-  scripts, the CLI) are not browser-initiated and pass through.
+  `Origin` is neither an allowed host nor an explicitly trusted origin. Requests
+  without an Origin (curl, scripts, the CLI) pass through.
 """
 
 from collections.abc import Sequence
@@ -46,13 +46,19 @@ def allowed_hosts_for(bind_host: str | None) -> list[str]:
 class OriginGuard:
     """Pure ASGI middleware rejecting cross-origin WebSocket handshakes and unsafe requests."""
 
-    def __init__(self, app: ASGIApp, allowed_hosts: Sequence[str]) -> None:
+    def __init__(self, app: ASGIApp, allowed_hosts: Sequence[str], allowed_origins: Sequence[str] = ()) -> None:
         self.app = app
-        self.allow_any = "*" in allowed_hosts
-        self.allowed_hosts = {h.lower() for h in allowed_hosts}
+        # Wildcard Host headers allow network access, never arbitrary browser origins.
+        hosts = LOOPBACK_HOSTS if "*" in allowed_hosts else allowed_hosts
+        self.allowed_hosts = {h.lower() for h in hosts}
+        self.allowed_origins = set()
+        for origin in allowed_origins:
+            if (key := self._origin_key(origin)) is None:
+                raise ValueError(f"Expected an explicit HTTP(S) origin: {origin!r}")
+            self.allowed_origins.add(key)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if not self.allow_any and self._needs_check(scope):
+        if self._needs_check(scope):
             origin = Headers(scope=scope).get("origin")
             if origin is not None and not self.origin_allowed(origin):
                 if scope["type"] == "websocket":
@@ -69,11 +75,28 @@ class OriginGuard:
         return scope["type"] == "http" and scope["method"] not in _SAFE_METHODS
 
     def origin_allowed(self, origin: str) -> bool:
-        try:
-            hostname = urlsplit(origin).hostname
-        except ValueError:
+        if (key := self._origin_key(origin)) is None:
             return False
-        if not hostname:  # e.g. the opaque "null" origin of file:// pages
-            return False
+        hostname = key[1]
         host = f"[{hostname}]" if ":" in hostname else hostname
-        return host.lower() in self.allowed_hosts
+        return host in self.allowed_hosts or key in self.allowed_origins
+
+    @staticmethod
+    def _origin_key(origin: str) -> tuple[str, str, int] | None:
+        try:
+            parsed = urlsplit(origin)
+            hostname = parsed.hostname
+            port = parsed.port
+        except ValueError:
+            return None
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        return parsed.scheme, hostname.lower(), port if port is not None else 443 if parsed.scheme == "https" else 80

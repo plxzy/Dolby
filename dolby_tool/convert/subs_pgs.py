@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..common import ToolError, run_tool, which_any
-from .mux import StreamInfo, discard_on_failure, probe, video_tag
+from .mux import StreamInfo, discard_on_failure, probe, require_distinct_output, video_tag
 
 
 @dataclass
@@ -47,11 +47,13 @@ def convert_and_remux(
 ) -> PgsConversionResult:
     """Convert PGS → VobSub and remux `target_mp4` plus the new tracks into `output`.
 
-    `output` must differ from `target_mp4`: ffmpeg can't read and write one file.
+    `output` must be a fresh path, distinct from both input files.
     A failed remux leaves no partial `output` behind.
     """
-    if output.resolve() == target_mp4.resolve():
-        raise ValueError("output must be a different file from target_mp4")
+    require_distinct_output(source_mkv, output)
+    require_distinct_output(target_mp4, output)
+    if output.exists() or output.is_symlink():
+        raise ValueError(f"Output already exists: {output}")
     if not pgs_streams:
         return PgsConversionResult(converted=0, skipped=0, reason="no PGS streams")
     bdsup2sub = _bdsup2sub()
@@ -106,7 +108,7 @@ def convert_and_remux(
         # offset by the count of subtitles already present.
         existing_subs = sum(1 for s in existing.raw.get("streams", []) if s.get("codec_type") == "subtitle")
 
-        cmd: list[str] = ["ffmpeg", "-hide_banner", "-nostdin", "-y", "-i", str(target_mp4)]
+        cmd: list[str] = ["ffmpeg", "-hide_banner", "-nostdin", "-n", "-i", str(target_mp4)]
         for idx, _lang in idx_subs:
             cmd += ["-i", str(idx)]
         cmd += ["-map", "0"]

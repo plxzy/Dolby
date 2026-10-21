@@ -12,6 +12,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 port=7878
+host=127.0.0.1
 mode=server
 
 case "${1:-}" in
@@ -20,11 +21,13 @@ case "${1:-}" in
   *) mode=passthrough ;;  # a subcommand, --help or --version
 esac
 
-# Pick up --port N / --port=N for server and stop modes (bash 3.2-safe: no arrays).
+# Pick up bind options for server and stop modes (bash 3.2-safe: no arrays).
 prev=""
 for arg in "$@"; do
   case "$arg" in --port=*) port="${arg#--port=}" ;; esac
+  case "$arg" in --host=*) host="${arg#--host=}" ;; esac
   if [ "$prev" = "--port" ]; then port="$arg"; fi
+  if [ "$prev" = "--host" ]; then host="$arg"; fi
   prev="$arg"
 done
 
@@ -47,9 +50,16 @@ command -v ffprobe >/dev/null 2>&1 || echo "[dolby-tool] WARNING: ffprobe not fo
 if [ "$mode" = server ]; then
   # Open the UI once the server answers (give up after ~15 s, e.g. on a port clash).
   (
-    url="http://localhost:$port"
+    case "$host" in
+      "" | 0.0.0.0) browser_host=127.0.0.1 ;;
+      :: | '[::]') browser_host='[::1]' ;;
+      \[*\]) browser_host="$host" ;;
+      *:*) browser_host="[$host]" ;;
+      *) browser_host="$host" ;;
+    esac
+    url="http://$browser_host:$port"
     for _ in $(seq 1 75); do
-      if curl -fsS -o /dev/null "http://127.0.0.1:$port/api/health" 2>/dev/null; then
+      if curl -fsS -o /dev/null "$url/api/health" 2>/dev/null; then
         if command -v open >/dev/null 2>&1; then open -a Safari "$url"; else echo "[dolby-tool] Ready: $url"; fi
         exit 0
       fi

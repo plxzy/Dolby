@@ -216,12 +216,20 @@ def _default_audio_index(audios: list[StreamInfo]) -> int:
 
 @contextmanager
 def discard_on_failure(output: Path) -> Iterator[None]:
-    """Delete a half-written `output` if the wrapped ffmpeg run fails or is interrupted."""
+    """Delete a newly created partial output, preserving files present before the attempt."""
+    existed = output.exists() or output.is_symlink()
     try:
         yield
     except ToolError, KeyboardInterrupt:
-        output.unlink(missing_ok=True)
+        if not existed:
+            output.unlink(missing_ok=True)
         raise
+
+
+def require_distinct_output(source: Path, output: Path) -> None:
+    """Reject in-place conversion, including symlink and hard-link aliases."""
+    if source.resolve() == output.resolve() or (output.exists() and source.exists() and source.samefile(output)):
+        raise ValueError("Input and output must be different files")
 
 
 def mux(
@@ -241,6 +249,7 @@ def mux(
     output = output.expanduser().resolve()
     if not source.is_file():
         raise ValueError(f"Input does not exist: {source}")
+    require_distinct_output(source, output)
     if output.exists() and not overwrite:
         raise ValueError(f"Output already exists (pass overwrite=True): {output}")
     output.parent.mkdir(parents=True, exist_ok=True)

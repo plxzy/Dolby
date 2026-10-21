@@ -9,6 +9,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from dolby_tool import __version__
 from dolby_tool.common import ToolError
+from dolby_tool.convert import mux
 from dolby_tool.web import filesystem
 from dolby_tool.web.app import create_app
 from dolby_tool.web.routes import capture as capture_routes
@@ -179,6 +180,26 @@ def test_cross_origin_websocket_is_rejected(client):
     ):
         ws.receive_json()
     assert exc.value.code == 1008
+
+
+@pytest.mark.parametrize("alias", ["same", "symlink", "hardlink"])
+def test_convert_rejects_input_aliases_before_mux(client, monkeypatch, tmp_path, alias):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"original media")
+    output = source if alias == "same" else tmp_path / "output.mp4"
+    if alias == "symlink":
+        output.symlink_to(source)
+    elif alias == "hardlink":
+        output.hardlink_to(source)
+
+    def unexpected_mux(*_args, **_kwargs):
+        pytest.fail("mux must not run for an input/output alias")
+
+    monkeypatch.setattr(mux, "mux", unexpected_mux)
+    response = client.post("/api/convert", json={"input": str(source), "output": str(output), "overwrite": True})
+    assert response.status_code == 400
+    assert "different files" in response.json()["detail"]
+    assert source.read_bytes() == b"original media"
 
 
 # ---------------------------------------------------------------------------

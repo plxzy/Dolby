@@ -47,9 +47,16 @@ async def _bad_request(_request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse({"detail": str(exc)}, status_code=400)
 
 
-def create_app(*, allowed_hosts: Sequence[str] | None = None) -> FastAPI:
-    """Build the app. `allowed_hosts` defaults to loopback plus the host from `$DOLBY_TOOL_HOST`."""
+def create_app(*, allowed_hosts: Sequence[str] | None = None, allowed_origins: Sequence[str] | None = None) -> FastAPI:
+    """Build the app, with independent Host and explicit additional browser-origin policies."""
     hosts = list(allowed_hosts) if allowed_hosts is not None else allowed_hosts_for(os.environ.get(HOST_ENV))
+    origins = (
+        list(allowed_origins)
+        if allowed_origins is not None
+        else [
+            origin.strip() for origin in os.environ.get("DOLBY_TOOL_ALLOWED_ORIGINS", "").split(",") if origin.strip()
+        ]
+    )
     hub = capture.CaptureHub()
 
     @asynccontextmanager
@@ -67,7 +74,7 @@ def create_app(*, allowed_hosts: Sequence[str] | None = None) -> FastAPI:
     app.state.capture_hub = hub
 
     # Middleware added last runs first: reject foreign Host headers, then cross-origin requests.
-    app.add_middleware(OriginGuard, allowed_hosts=hosts)
+    app.add_middleware(OriginGuard, allowed_hosts=hosts, allowed_origins=origins)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
 
     app.add_exception_handler(InspectError, _bad_request)

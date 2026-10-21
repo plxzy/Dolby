@@ -120,3 +120,26 @@ def test_missing_bdsup2sub_skips_everything(files, monkeypatch) -> None:
     result = subs_pgs.convert_and_remux(source, target, PGS, output=output)
     assert (result.converted, result.skipped) == (0, 1)
     assert "bdsup2sub" in (result.reason or "")
+
+
+@pytest.mark.parametrize("kind", ["existing", "source", "source-symlink", "target-hardlink", "dangling-symlink"])
+def test_second_pass_never_overwrites_existing_files(files, tools, kind) -> None:
+    source, target, output = files
+    source.write_bytes(b"source media")
+    if kind == "existing":
+        output.write_bytes(b"unrelated media")
+    elif kind == "source":
+        output = source
+    elif kind == "source-symlink":
+        output.symlink_to(source)
+    elif kind == "target-hardlink":
+        output.hardlink_to(target)
+    else:
+        output.symlink_to(output.with_name("missing"))
+    with pytest.raises(ValueError):
+        subs_pgs.convert_and_remux(source, target, PGS, output=output)
+    assert source.read_bytes() == b"source media"
+    assert target.read_bytes() == b"first pass"
+    if kind == "existing":
+        assert output.read_bytes() == b"unrelated media"
+    assert tools == []

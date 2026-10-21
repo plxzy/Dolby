@@ -68,6 +68,7 @@ def convert(body: ConvertPayload) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=f"input not found: {src}")
     summary: dict[str, Any] = {"input": str(src), "output": str(dst)}
     try:
+        mux.require_distinct_output(src, dst)
         summary["mux"] = mux.mux(src, dst, overwrite=body.overwrite)
         if not body.skip_pgs:
             info = mux.probe(src)

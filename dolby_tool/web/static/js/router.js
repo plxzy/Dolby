@@ -28,7 +28,7 @@ export function initRouter({ fallback, appName }) {
 
   window.addEventListener('hashchange', () => {
     // In-page anchors such as the skip link (#main) are not routes.
-    if (!location.hash.startsWith('#/') || routeName() === current) return;
+    if ((location.hash && !location.hash.startsWith('#/')) || routeName() === current) return;
     window.scrollTo({ top: 0 });
     if (document.startViewTransition && !reducedMotion.matches) document.startViewTransition(render);
     else render();

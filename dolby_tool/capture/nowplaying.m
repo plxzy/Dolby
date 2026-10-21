@@ -30,10 +30,29 @@ static void put(NSMutableDictionary *out, NSString *key, id value) {
     if ([value isKindOfClass:[NSString class]] || [value isKindOfClass:[NSNumber class]]) out[key] = value;
 }
 
-static void wait_for(dispatch_semaphore_t done) {
-    dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, kTimeout));
+typedef void (^ResultCompletion)(NSDictionary *);
+
+static NSDictionary *request_result(int64_t timeout, void (^start)(ResultCompletion)) {
+    NSObject *lock = [NSObject new];
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    __block BOOL finished = NO;
+    __block NSDictionary *result = nil;
+    start(^(NSDictionary *value) {
+        @synchronized (lock) {
+            if (finished) return;
+            result = [value copy];
+            finished = YES;
+            dispatch_semaphore_signal(done);
+        }
+    });
+    long status = dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, timeout));
+    @synchronized (lock) {
+        finished = YES;  // A timeout closes this request; late callbacks cannot publish.
+        return status == 0 ? result : nil;
+    }
 }
 
+#ifndef NOWPLAYING_TEST
 __attribute__((constructor)) static void print_now_playing(void) {
     @autoreleasepool {
         void *mr = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_NOW);
@@ -49,17 +68,18 @@ __attribute__((constructor)) static void print_now_playing(void) {
                 [request setValue:@0 forKey:@"location"];
                 [request setValue:@1 forKey:@"length"];
             } @catch (__unused id e) {}
-            dispatch_semaphore_t done = dispatch_semaphore_create(0);
-            request_queue(request, nil, nil, queue, ^(id playback_queue, __unused NSError *error) {
+            NSDictionary *metadata = request_result(kTimeout, ^(ResultCompletion complete) {
+              request_queue(request, nil, nil, queue, ^(id playback_queue, __unused NSError *error) {
+                NSMutableDictionary *values = [NSMutableDictionary dictionary];
                 id item = [kvc(playback_queue, @"contentItems") firstObject];
                 id md = kvc(item, @"metadata");
                 if (md) {
-                    put(out, @"Title", kvc(md, @"title"));
-                    put(out, @"Album", kvc(md, @"albumName"));
-                    put(out, @"Artist", kvc(md, @"trackArtistName"));
-                    put(out, @"Duration", kvc(md, @"duration"));
-                    put(out, @"PlaybackRate", kvc(md, @"playbackRate"));
-                    put(out, @"MediaType", kvc(md, @"mediaType"));
+                    put(values, @"Title", kvc(md, @"title"));
+                    put(values, @"Album", kvc(md, @"albumName"));
+                    put(values, @"Artist", kvc(md, @"trackArtistName"));
+                    put(values, @"Duration", kvc(md, @"duration"));
+                    put(values, @"PlaybackRate", kvc(md, @"playbackRate"));
+                    put(values, @"MediaType", kvc(md, @"mediaType"));
                     // elapsedTime is a snapshot taken at elapsedTimeTimestamp; project it to now.
                     NSNumber *elapsed = kvc(md, @"elapsedTime");
                     // A CFAbsoluteTime (seconds since 2001) as NSNumber; tolerate an NSDate too.
@@ -71,36 +91,47 @@ __attribute__((constructor)) static void print_now_playing(void) {
                                      : [stamp isKindOfClass:[NSNumber class]] ? [(NSNumber *)stamp doubleValue] : 0;
                         if (taken > 0 && [rate isKindOfClass:[NSNumber class]])
                             value += (CFAbsoluteTimeGetCurrent() - taken) * rate.doubleValue;
-                        out[@"ElapsedTime"] = @(value);
+                        values[@"ElapsedTime"] = @(value);
                     }
                 }
-                dispatch_semaphore_signal(done);
+                complete(values);
+              });
             });
-            wait_for(done);
+            if (metadata) [out addEntriesFromDictionary:metadata];
         }
 
         if (out.count) {
             GetPidFn get_pid = (GetPidFn)dlsym(mr, "MRMediaRemoteGetNowPlayingApplicationPID");
             GetIsPlayingFn get_playing = (GetIsPlayingFn)dlsym(mr, "MRMediaRemoteGetNowPlayingApplicationIsPlaying");
             GetClientFn get_client = (GetClientFn)dlsym(mr, "MRMediaRemoteGetNowPlayingClient");
-            dispatch_semaphore_t done = dispatch_semaphore_create(0);
             if (get_pid) {
-                get_pid(queue, ^(int pid) { if (pid > 0) out[@"ApplicationPID"] = @(pid); dispatch_semaphore_signal(done); });
-                wait_for(done);
+                NSDictionary *value = request_result(kTimeout, ^(ResultCompletion complete) {
+                    get_pid(queue, ^(int pid) { complete(pid > 0 ? @{@"ApplicationPID": @(pid)} : @{}); });
+                });
+                if (value) [out addEntriesFromDictionary:value];
             }
             if (get_playing) {
-                get_playing(queue, ^(BOOL playing) { out[@"IsPlaying"] = @(playing); dispatch_semaphore_signal(done); });
-                wait_for(done);
+                NSDictionary *value = request_result(kTimeout, ^(ResultCompletion complete) {
+                    get_playing(queue, ^(BOOL playing) { complete(@{@"IsPlaying": @(playing)}); });
+                });
+                if (value) [out addEntriesFromDictionary:value];
             }
             if (get_client) {
-                get_client(queue, ^(id client) { put(out, @"BundleIdentifier", kvc(client, @"bundleIdentifier")); dispatch_semaphore_signal(done); });
-                wait_for(done);
+                NSDictionary *value = request_result(kTimeout, ^(ResultCompletion complete) {
+                    get_client(queue, ^(id client) {
+                        NSMutableDictionary *values = [NSMutableDictionary dictionary];
+                        put(values, @"BundleIdentifier", kvc(client, @"bundleIdentifier"));
+                        complete(values);
+                    });
+                });
+                if (value) [out addEntriesFromDictionary:value];
             }
         }
 
-        NSData *json = [NSJSONSerialization dataWithJSONObject:out options:0 error:nil];
+        NSData *json = [NSJSONSerialization dataWithJSONObject:[out copy] options:0 error:nil];
         if (json) fwrite(json.bytes, 1, json.length, stdout);
         fputc('\n', stdout);
         fflush(stdout);
     }
 }
+#endif

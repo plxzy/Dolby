@@ -1,5 +1,6 @@
 """Flatten a downloaded persisted-HLS `.movpkg` into a plain folder that `hls-serve` can serve."""
 
+import unicodedata
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,7 @@ class StreamInfo:
     """A stream folder's `StreamInfoBoot.xml`: its local playlist and fragments in playback order."""
 
     playlist: Path
+    playlist_name: str
     fragments: list[Path]
     media_bytes_stored: int
 
@@ -57,9 +59,10 @@ def prepare_hls_from_movpkg(
     if output.exists() and any(output.iterdir()) and not overwrite:
         raise ValueError(f"Output directory is not empty: {output}")
 
-    boot = _parse_xml(source / "boot.xml")
+    boot = _parse_xml(_source_path(source, source, "boot.xml"))
     master = _master_playlist_path(source, boot)
     streams = [_flat_stream(source, stream, output) for stream in _boot_streams(source, boot)]
+    _validate_destinations(output, streams)
 
     output.mkdir(parents=True, exist_ok=True)
     (output / MASTER_PLAYLIST).write_text(read_playlist(master), encoding="utf-8")
@@ -95,11 +98,11 @@ def prepare_hls_summary_markdown(summary: dict[str, object]) -> str:
 
 
 def _flat_stream(source: Path, stream: BootStream, output: Path) -> FlatStream:
-    info = _parse_stream_info(source / stream.path)
+    info = _parse_stream_info(source, _source_path(source, source, stream.path))
     flat = FlatStream(
         stream_id=stream.id,
         info=info,
-        playlist=_url_basename(stream.network_url) or info.playlist.name,
+        playlist=_url_basename(stream.network_url) or info.playlist_name,
         segment=first_segment_uri(info.playlist),
     )
     for name in (flat.playlist, flat.segment):
@@ -126,11 +129,39 @@ def _write_stream(output: Path, stream: FlatStream) -> dict[str, object]:
     }
 
 
-def _require_inside(output: Path, name: str) -> None:
+def _require_inside(output: Path, name: str) -> Path:
     """Refuse a name from the package that would not land inside `output`."""
     target = (output / name).resolve()
-    if urlparse(name).scheme or target == output or not target.is_relative_to(output):
+    if urlparse(name).scheme or Path(name).is_absolute() or target == output or not target.is_relative_to(output):
         raise ValueError(f"Refusing to write {name!r}: it does not resolve to a file inside {output}")
+    return target
+
+
+def _validate_destinations(output: Path, streams: list[FlatStream]) -> None:
+    """Reserve all files before writing, including aliases on macOS filesystems."""
+    names = [MASTER_PLAYLIST, *(name for stream in streams for name in (stream.playlist, stream.segment))]
+    targets: list[Path] = []
+    keys: list[tuple[str, ...]] = []
+    for name in names:
+        target = _require_inside(output, name)
+        key = tuple(unicodedata.normalize("NFC", part).casefold() for part in target.relative_to(output).parts)
+        for previous, previous_key in zip(targets, keys, strict=True):
+            if (
+                key[: len(previous_key)] == previous_key
+                or previous_key[: len(key)] == key
+                or (target.exists() and previous.exists() and target.samefile(previous))
+            ):
+                raise ValueError(f"Conflicting output destinations: {previous.name!r} and {name!r}")
+        targets.append(target)
+        keys.append(key)
+
+
+def _source_path(root: Path, parent: Path, name: str) -> Path:
+    """Resolve a package reference before reading it, containing symlinks to the original root."""
+    target = (parent / name).resolve()
+    if urlparse(name).scheme or Path(name).is_absolute() or not target.is_relative_to(root):
+        raise ValueError(f"Refusing to read {name!r}: it does not resolve inside package {root}")
+    return target
 
 
 def _master_playlist_path(movpkg: Path, boot: ET.Element) -> Path:
@@ -142,7 +173,8 @@ def _master_playlist_path(movpkg: Path, boot: ET.Element) -> Path:
         raise ValueError("Master playlist DataItem has no DataPath")
     data_dir = boot.find(".//{*}DataItems")
     directory = data_dir.attrib.get("Directory", "Data") if data_dir is not None else "Data"
-    return movpkg / directory / data_path
+    data_root = _source_path(movpkg, movpkg, directory)
+    return _source_path(movpkg, data_root, data_path)
 
 
 def _boot_streams(movpkg: Path, boot: ET.Element) -> list[BootStream]:
@@ -161,8 +193,8 @@ def _boot_streams(movpkg: Path, boot: ET.Element) -> list[BootStream]:
     return streams
 
 
-def _parse_stream_info(stream_dir: Path) -> StreamInfo:
-    info = _parse_xml(stream_dir / "StreamInfoBoot.xml")
+def _parse_stream_info(root: Path, stream_dir: Path) -> StreamInfo:
+    info = _parse_xml(_source_path(root, stream_dir, "StreamInfoBoot.xml"))
     playlist_rel = info.findtext(".//{*}MediaPlaylist/{*}PathToLocalCopy")
     if not playlist_rel:
         raise ValueError(f"No local media playlist in {stream_dir / 'StreamInfoBoot.xml'}")
@@ -172,8 +204,11 @@ def _parse_stream_info(stream_dir: Path) -> StreamInfo:
         key=lambda element: int(element.attrib.get("SeqNum", "0")),
     )
     return StreamInfo(
-        playlist=stream_dir / playlist_rel,
-        fragments=[stream_dir / _fragment_path(element) for element in [*init_segments, *media_segments]],
+        playlist=_source_path(root, stream_dir, playlist_rel),
+        playlist_name=Path(playlist_rel).name,
+        fragments=[
+            _source_path(root, stream_dir, _fragment_path(element)) for element in [*init_segments, *media_segments]
+        ],
         media_bytes_stored=int(info.findtext("{*}MediaBytesStored") or "0"),
     )
 

@@ -179,6 +179,11 @@ depending on FFmpeg-version-specific defaults.
 
 ## Notes
 
+- Binding to all interfaces (`--host 0.0.0.0` or `--host ::`) keeps browser origins restricted
+  to loopback. To use the UI over your LAN, explicitly trust its full origin (scheme, host and port):
+  `DOLBY_TOOL_ALLOWED_ORIGINS=http://192.168.1.20:7878 ./dolby-tool --host 0.0.0.0`.
+  Multiple trusted origins can be comma-separated. A specific `--host 192.168.1.20` also trusts
+  that host. Only use these network modes on a trusted network: the tool accesses local files.
 - Files are referenced by path, never uploaded — videos are too large. Drag from
   Finder, paste a path, or use the native picker.
 - Drag-and-drop resolves names via Spotlight first and falls back to `find(1)`
