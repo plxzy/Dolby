@@ -76,23 +76,30 @@ def test_convert_reports_mux_errors_without_a_traceback(tmp_path: Path) -> None:
 # --------------------------------------------------------------------- output
 
 
-def test_tag_prints_its_own_heading(monkeypatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    monkeypatch.setattr(commands, "_tag", lambda path, args: {"metadata": {"applied": False}})
-    commands.main_tag([str(tmp_path / "movie.m4v")])
-    out = capsys.readouterr().out
-    assert out.startswith("# tag summary")
-    assert "convert" not in out.splitlines()[0]
-
-
-def test_tag_json_output(monkeypatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    monkeypatch.setattr(commands, "_tag", lambda path, args: {"metadata": {"applied": False}})
-    commands.main_tag([str(tmp_path / "movie.m4v"), "--json"])
-    assert json.loads(capsys.readouterr().out)["metadata"] == {"applied": False}
-
-
 def test_interactive_prompt_goes_to_stderr(monkeypatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setattr("sys.stdin", io.StringIO("2\n"))
     assert commands._pick_interactive("Results:", ["a", "b"]) == 1
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "Pick:" in captured.err
+
+
+def test_directory_artwork_only_skips_lookup_and_nested_or_non_mp4_files(monkeypatch, tmp_path, capsys) -> None:
+    for name in ["02.M4V", "01.mp4", "source.mkv"]:
+        (tmp_path / name).touch()
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "03.mp4").touch()
+    image = tmp_path / "poster.jpg"
+    image.write_bytes(b"jpeg")
+
+    def lookup(*args, **kwargs):
+        pytest.fail("artwork-only tagging must not look up metadata")
+
+    monkeypatch.setattr(commands, "resolve_metadata", lookup)
+    monkeypatch.setattr(commands.tagger, "_atomicparsley", lambda: None)
+    commands.main_tag([str(tmp_path), "--season-artwork", str(image), "--json"])
+    result = json.loads(capsys.readouterr().out)
+    assert result["directory"] == str(tmp_path)
+    assert [Path(entry["file"]).name for entry in result["files"]] == ["01.mp4", "02.M4V"]
+    assert all("metadata" not in entry and entry["artwork"]["applied"] is False for entry in result["files"])

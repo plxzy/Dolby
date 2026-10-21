@@ -31,6 +31,7 @@ it behind one local web UI and a scriptable CLI.
 | **Inspect** | Dolby Vision profile & compatibility (5 / 7 / 8.1 / 8.2 / 8.4), sample-entry FourCC with a TV.app breakage warning, HDR10 mastering display / content light level, HDR10+, every audio track (codec, channels, layout, bitrate, Atmos/JOC), subtitles (default / forced / SDH), container stats. |
 | **Compare** | Ranks several releases with a weighted score (DV, FourCC, HDR10+, Atmos, bitrate, resolution, subtitles), stacked score bars per component, per-dimension winners and adjustable weights. |
 | **TV Capture** | Summarises what TV.app *actually* played. Administrators get the macOS unified log: DV profile, hardware decoder FourCC, audio format, channels, spatialisation, HLS audio group, bitrate. Every account, admin or not, also gets system evidence: hardware decode (codec, coded size, bit depth, DRM), HDR/EDR presentation, audio output, measured download rate, Now Playing title and opened media files. Saved logs can be imported on any OS. |
+| **Convert / Tag** | Remux a local file to `.m4v`, optionally add Apple TV metadata, or tag an existing file or season folder. Replace episode cover art with a shared season image. |
 | **CLI** | Everything above as scriptable commands with Markdown or JSON output, plus `.movpkg` inventory, local fMP4 HLS packaging/serving and an MKV → Apple-TV `.m4v` converter. |
 
 <table>
@@ -69,18 +70,25 @@ uv installs Python 3.14 and the locked dependencies on first run.
 | `dolby-tool hls-prepare PKG OUT` | Flatten a persisted-HLS `.movpkg` into a servable folder. |
 | `dolby-tool hls-package-capture FILE OUT` | Package, serve, open QuickTime and capture logs in one go. |
 | `dolby-tool convert IN.mkv OUT.m4v` | Remux MKV → Apple-TV-ready `.m4v` (+ optional Apple TV metadata). |
-| `dolby-tool tag FILE` | Write Apple TV metadata and artwork into an existing file. |
+| `dolby-tool tag FILE_OR_DIR [--season-artwork IMAGE]` | Write Apple TV metadata or replace artwork in one file or every immediate `.mp4`/`.m4v` in a folder. |
 
 `uv run dolby-tool …` and `uv run python -m dolby_tool …` work too.
 
 ## Convert MKV → Apple TV
 
-`dolby-tool convert` stream-copies an MKV (or MP4) into an Apple-TV-ready `.m4v` — no re-encode:
+`dolby-tool convert` stream-copies an MKV (or MP4) into an Apple-TV-ready `.m4v` — no re-encode.
+
+The **Convert** view exposes conversion and in-place tagging without uploading files.
+Metadata lookup is off by default for web conversions; enable it to search the Apple
+TV catalogue. Existing conversion outputs are preserved unless **Overwrite** is selected.
+The same workflows are available at `POST /api/convert` and `POST /api/tag`; see `/docs`
+for their request fields.
 
 ```bash
 dolby-tool convert "Movie (2024).mkv" "Movie (2024).m4v"            # interactive Apple TV metadata lookup
 dolby-tool convert in.mkv out.m4v --no-metadata --json             # just the remux, machine-readable summary
 dolby-tool tag "Severance S01E01.m4v" --non-interactive            # tag an existing file in place
+dolby-tool tag "Season 1" --season-artwork poster.jpg --json       # replace art on immediate MP4/M4V files
 ```
 
 - **Video** is tagged `hvc1` (Apple players reject FFmpeg's default `hev1`); Dolby Vision
@@ -94,6 +102,10 @@ dolby-tool tag "Severance S01E01.m4v" --non-interactive            # tag an exis
 - **Metadata** (optional) comes from the Apple TV catalogue for any storefront
   (`--storefront GB`), including artwork and content ratings, and is written with
   [AtomicParsley](https://github.com/wez/atomicparsley).
+- **Season artwork:** catalogue season art is preferred over show and episode artwork
+  when Apple publishes it. `tag FILE_OR_DIR --season-artwork IMAGE` replaces all cover
+  images with the local image; without `--metadata-id` or `--show`, it skips catalogue
+  lookup entirely. Folder tagging is non-recursive and modifies the media in place.
 - Expert knobs: `--colr-from-source` / `--colr-*` patch the `colr` box in place;
   `--experimental-force-dec3-joc` only patches a `dec3` box that already reserves the JOC
   extension bytes and otherwise reports why it can't.
@@ -119,7 +131,7 @@ flowchart LR
     TOOLS[("ffprobe · ffmpeg<br/>mediainfo · log stream")]
 
     UI -- "REST + WebSocket" --> SEC --> APP
-    APP --> AN & CAP
+    APP --> AN & CAP & CONV
     CLI --> AN & CAP & HLS & CONV
     AN & CAP & HLS & CONV --> COMMON["common<br/>run_tool · helpers"] --> TOOLS
 ```
@@ -161,6 +173,9 @@ uv run dolby-tool --reload   # UI with auto-reload
 
 CI runs lint, format check and the full test suite on every push and pull
 request; Dependabot keeps `uv.lock` and the GitHub Actions up to date.
+Real-media fixtures set encoder colour signalling explicitly; the MP4 colour-box
+fixture also sets frame colour properties and requests `write_colr`, rather than
+depending on FFmpeg-version-specific defaults.
 
 ## Notes
 

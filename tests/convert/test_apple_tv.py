@@ -200,6 +200,42 @@ def test_missing_or_null_payloads_degrade_to_empty(monkeypatch) -> None:
     assert apple_tv.search_movies("x", US) == []
 
 
+def test_season_catalog_art_precedes_episode_and_show_art(catalog, monkeypatch) -> None:
+    original_get = apple_tv._get
+
+    def image(host):
+        return {"coverArt": {"url": f"https://{host}/{{w}}x{{h}}.{{f}}", "width": 600, "height": 900}}
+
+    def get(url):
+        if "/itunesSeasons?" in url:
+            return {
+                "data": {
+                    "seasons": {
+                        "show": [
+                            None,
+                            {"seasonNumber": "2", "images": image("catalog-season")},
+                        ]
+                    }
+                }
+            }
+        if "/episodes?skip=" in url:
+            episode = dict(EPISODES["data"]["episodes"][0], seasonImages=image("episode-season"))
+            return {"data": {"episodes": [episode]}}
+        return original_get(url)
+
+    monkeypatch.setattr(apple_tv, "_get", get)
+    show = apple_tv.search_shows("Severance", US)[0]
+    show.images = image("show")
+    meta = apple_tv.fetch_episode(show, 2, 1, US)
+    assert meta is not None
+    assert [art.url.split("/")[2] for art in meta.artworks[:4]] == [
+        "catalog-season",
+        "episode-season",
+        "show",
+        "ep",
+    ]
+
+
 # --------------------------------------------------------------------- HTTP layer
 
 

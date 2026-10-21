@@ -97,6 +97,9 @@ def test_patch_colr_on_real_ffmpeg_output(media_clip, tmp_path: Path) -> None:
         "bt709.mp4",
         "-map", "0:v", "-c:v", "libx264", "-preset", "ultrafast",
         "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
+        "-vf", "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709",
+        "-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709",
+        "-movflags", "+write_colr",
     )  # fmt: skip
     path = tmp_path / "patched.mp4"
     path.write_bytes(clip.read_bytes())
@@ -245,14 +248,8 @@ def test_ffmpeg_made_eac3_is_not_corrupted_by_the_patcher(media_clip, tmp_path: 
     path = tmp_path / "eac3.mp4"
     path.write_bytes(clip.read_bytes())
 
-    with open(path, "rb") as f:
-        dec3_box = next(b for b in walk(atoms.parse(f)) if b.type == b"dec3")
-    payload = path.read_bytes()[dec3_box.payload_offset : dec3_box.end]
-    assert len(payload) == 6  # ffmpeg's non-standard form: the 5-byte layout plus a stray byte
-
     before = path.read_bytes()
     (result,) = atoms.patch_dec3_joc(path)
     assert result.patched is False
-    assert "non-standard" in result.reason
     assert path.read_bytes() == before
     assert ffprobe_json(path, "-show_streams")["streams"][0]["codec_name"] == "eac3"

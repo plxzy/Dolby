@@ -1,5 +1,5 @@
 /**
- * Hash router for the three views (#/inspect, #/compare, #/capture). Views
+ * Hash router for the tool views. Views
  * keep their state while hidden; switching uses a View Transition where the
  * browser supports it and the user hasn't asked for reduced motion.
  */

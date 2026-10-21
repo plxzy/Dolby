@@ -163,7 +163,7 @@ def test_inspect_surfaces_the_warning(media_file, monkeypatch):
 
 
 _HDR10_X265 = (
-    "hdr10=1:repeat-headers=1:log-level=error:max-cll=1000,400:"
+    "hdr10=1:repeat-headers=1:log-level=error:max-cll=1000,400:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:"
     "master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1)"
 )
 

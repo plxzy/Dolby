@@ -14,7 +14,7 @@ from starlette.responses import Response
 from .. import __version__
 from ..analysis import InspectError
 from ..common import ToolError
-from .routes import capture, files, media, system
+from .routes import capture, convert, files, media, system
 from .security import OriginGuard, allowed_hosts_for
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -32,6 +32,7 @@ _TAGS = [
     {"name": "files", "description": "Native file dialog, Finder drag-and-drop resolution and folder listings."},
     {"name": "capture", "description": "Live TV.app playback capture via macOS `log stream`, and saved-log parsing."},
     {"name": "system", "description": "Tool availability and health."},
+    {"name": "convert", "description": "Convert local media and apply Apple TV metadata or season artwork."},
 ]
 
 
@@ -72,7 +73,7 @@ def create_app(*, allowed_hosts: Sequence[str] | None = None) -> FastAPI:
     app.add_exception_handler(InspectError, _bad_request)
     app.add_exception_handler(ToolError, _bad_request)
 
-    for router in (media.router, files.router, capture.router, system.router):
+    for router in (media.router, files.router, capture.router, system.router, convert.router):
         app.include_router(router)
 
     @app.get("/", include_in_schema=False)

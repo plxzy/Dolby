@@ -351,7 +351,9 @@ def test_language_attribute_follows_the_audio_track(tmp_path, source, fake_tools
 def test_hlg_clip_is_labelled_hlg(tmp_path, media_clip):
     clip = media_clip(
         "hls_hevc_hlg.mp4",
-        "-c:v", "libx265", "-x265-params", "log-level=error", "-tag:v", "hvc1",
+        "-c:v", "libx265",
+        "-x265-params", "log-level=error:colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc",
+        "-tag:v", "hvc1",
         "-color_primaries", "bt2020", "-color_trc", "arib-std-b67", "-colorspace", "bt2020nc",
         "-c:a", "eac3",
     )  # fmt: skip

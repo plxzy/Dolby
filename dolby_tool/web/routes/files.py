@@ -31,11 +31,11 @@ class DirectoryListing(BaseModel):
     files: list[FileEntry]
 
 
-@router.get("/pick", response_model=PickedPaths, summary="Native macOS file dialog")
-def pick(multi: bool = False) -> PickedPaths:
-    """Show the macOS "choose file" dialog. Returns no paths when the user cancels."""
+@router.get("/pick", response_model=PickedPaths, summary="Native macOS file or folder dialog")
+def pick(multi: bool = False, directory: bool = False) -> PickedPaths:
+    """Show the macOS file/folder dialog. Returns no paths when the user cancels."""
     try:
-        return PickedPaths(paths=filesystem.pick_files(multiple=multi))
+        return PickedPaths(paths=filesystem.pick_files(multiple=multi, directory=directory))
     except ToolError as e:
         raise HTTPException(status_code=501, detail="The native file picker needs macOS (osascript).") from e
 

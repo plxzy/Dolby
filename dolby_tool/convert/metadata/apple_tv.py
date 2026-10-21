@@ -273,6 +273,33 @@ def fetch_episodes(show_id: str, store: Store, *, skip: int, count: int) -> list
     return (payload.get("data") or {}).get("episodes") or []
 
 
+def fetch_season_artwork(show_id: str, season: int, store: Store) -> list[Artwork]:
+    """Pull Apple's purpose-made per-season cover art from `show/{id}/itunesSeasons`.
+
+    Returns 0..2 Artwork entries (portrait `coverArt` and/or 16x9). Empty when
+    Apple hasn't published catalog art for that season yet — observed for
+    in-progress seasons where the show predates the season being added (e.g.
+    The Boys S5 wasn't in the catalog mid-2026).
+    """
+    url = f"{_EPISODES}{show_id}/itunesSeasons?sf={store.store_code}&locale={store.locale}{_OPTIONS}"
+    payload = _get(url)
+    if not payload:
+        return []
+    seasons_blob = (payload.get("data") or {}).get("seasons") or {}
+    # Response groups seasons under canonical-show keys.
+    entries: list[dict[str, Any]] = []
+    if isinstance(seasons_blob, dict):
+        for v in seasons_blob.values():
+            if isinstance(v, list):
+                entries.extend(entry for entry in v if isinstance(entry, dict))
+    elif isinstance(seasons_blob, list):
+        entries = [entry for entry in seasons_blob if isinstance(entry, dict)]
+    match = next((s for s in entries if to_int(s.get("seasonNumber")) == season), None)
+    if not match:
+        return []
+    return _artworks_from(match.get("images") or {}, prefer16x9=False)
+
+
 def fetch_episode(show_hit: SearchHit, season: int, episode: int, store: Store) -> Metadata | None:
     """Find a single episode by (season, episode) within a show search hit."""
     with session():
@@ -306,8 +333,14 @@ def _fetch_episode(show_hit: SearchHit, season: int, episode: int, store: Store)
         service_episode_id=ep.get("id"),
         itunes_url=ep.get("showUrl"),
         artworks=(
-            _artworks_from(show_hit.images, prefer16x9=True)
+            # Order matters: catalog season poster first (Apple's purpose-made
+            # per-season art) so it lands at covr index 0 — TV.app uses the
+            # lowest-numbered episode's covr[0] as the season tile, and shared
+            # poster across episodes is the only way to get a distinct season
+            # tile for sideloaded files.
+            fetch_season_artwork(show_hit.id, season, store)
             + _artworks_from(ep.get("seasonImages") or {}, prefer16x9=True)
+            + _artworks_from(show_hit.images, prefer16x9=True)
             + _artworks_from(ep.get("images") or {}, prefer16x9=False, preview=True)
         ),
     )

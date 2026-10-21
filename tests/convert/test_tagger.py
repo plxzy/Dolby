@@ -80,3 +80,8 @@ def test_artwork_size_from_image_json(image, size) -> None:
 def test_artwork_requires_a_url() -> None:
     assert artwork.from_image(None) is None
     assert artwork.from_image({"width": 1}) is None
+
+
+def test_replace_artwork_missing_image_does_not_modify_media(atomicparsley, tmp_path: Path) -> None:
+    assert tagger.apply_artwork(tmp_path / "episode.m4v", tmp_path / "missing.jpg")["applied"] is False
+    assert atomicparsley == []

@@ -277,10 +277,11 @@
 
   .nav {
     flex-direction: row;
+    flex-wrap: wrap;
   }
 
   .nav li {
-    flex: 1;
+    flex: 1 1 120px;
   }
 
   .nav-item {

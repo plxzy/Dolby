@@ -325,19 +325,37 @@ def main_convert(argv: list[str]) -> None:
     if not args.no_metadata:
         summary |= _tag(dst, args)
 
+    if args.season_artwork:
+        summary["artwork"] = tagger.apply_artwork(dst, Path(args.season_artwork).expanduser().resolve())
+
     _print_summary(summary, title="convert summary", as_json=args.json)
 
 
 def main_tag(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(prog="dolby-tool tag")
-    parser.add_argument("file", help="Existing .m4v/.mp4 to tag in place.")
+    parser.add_argument("file", help="Existing .m4v/.mp4 file or directory to tag in place.")
     _add_metadata_args(parser)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
     path = Path(args.file).expanduser().resolve()
-    summary: dict[str, object] = {"file": str(path)}
-    summary |= _tag(path, args)
+    if path.is_dir():
+        files = sorted(p for p in path.iterdir() if p.is_file() and p.suffix.lower() in {".mp4", ".m4v"})
+    elif path.is_file():
+        files = [path]
+    else:
+        sys.exit(f"error: not found: {path}")
+    art = Path(args.season_artwork).expanduser().resolve() if args.season_artwork else None
+    art_only = art is not None and not (args.metadata_id or args.show)
+    results: list[dict[str, object]] = []
+    for file in files:
+        entry: dict[str, object] = {"file": str(file)}
+        if not art_only:
+            entry |= _tag(file, args)
+        if art is not None:
+            entry["artwork"] = tagger.apply_artwork(file, art)
+        results.append(entry)
+    summary = results[0] if len(results) == 1 else {"directory": str(path), "files": results}
     _print_summary(summary, title="tag summary", as_json=args.json)
 
 
@@ -350,6 +368,7 @@ def _add_metadata_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--show", help="Override show name (forces TV mode).")
     parser.add_argument("--season", type=int, help="Override season number.")
     parser.add_argument("--episode", type=int, help="Override episode number.")
+    parser.add_argument("--season-artwork", help="Local season image to replace cover art after tagging.")
 
 
 def _tag(path: Path, args: argparse.Namespace) -> dict[str, object]:

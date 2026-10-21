@@ -1,4 +1,97 @@
-/* View-specific layout: Inspect, Compare and TV Capture. */
+/* View-specific layout: Inspect, Compare, TV Capture and Convert / Tag. */
+
+/* ==== Convert / Tag ====================================================== */
+
+.convert-setup,
+.convert-operation,
+.convert-form {
+  display: grid;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.convert-operation {
+  overflow-wrap: anywhere;
+}
+
+.convert-operation + .convert-operation {
+  margin-top: var(--space-6);
+}
+
+.convert-form {
+  padding: var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--surface-1);
+}
+
+.convert-field {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-sm);
+}
+
+.convert-path {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.convert-path .input {
+  flex: 1 1 180px;
+  width: 100%;
+}
+
+.convert-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+
+.convert-fields legend {
+  padding-inline: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.convert-fields:disabled {
+  opacity: 0.6;
+}
+
+.convert-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.convert-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  font-size: var(--text-sm);
+}
+
+.convert-help {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.convert-form > .btn {
+  justify-self: start;
+}
+
+.convert-json {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
 
 /* ==== Inspect ============================================================= */
 

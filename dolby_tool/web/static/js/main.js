@@ -11,6 +11,7 @@ import { initTheme } from './theme.js';
 import * as capture from './views/capture.js';
 import * as compare from './views/compare.js';
 import * as inspect from './views/inspect.js';
+import * as convert from './views/convert.js';
 
 const DISMISS_KEY = 'dolby-tool.capabilities-dismissed';
 
@@ -69,5 +70,5 @@ initRouter({ fallback: 'inspect', appName: 'dolby·tool' });
 guardStrayDrops();
 
 const capabilities = getJson('/api/capabilities').catch(() => null);
-for (const view of [inspect, compare, capture]) view.init({ capabilities });
+for (const view of [inspect, compare, capture, convert]) view.init({ capabilities });
 capabilities.then(showCapabilityNotice);

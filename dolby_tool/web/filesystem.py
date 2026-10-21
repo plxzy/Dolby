@@ -12,10 +12,10 @@ _FIND_ROOTS = ("/Volumes", "~/Movies", "~/Desktop", "~/Downloads")
 _FIND_LIMIT = 20
 _GLOB_CHARS = re.compile(r"([*?\[\]\\])")
 
-_PICK_ONE = 'POSIX path of (choose file with prompt "Pick a file")'
+_PICK_ONE = 'POSIX path of (choose {kind} with prompt "Pick a {kind}")'
 _PICK_MANY = "\n".join(
     [
-        'set theFiles to (choose file with prompt "Pick file(s)" with multiple selections allowed)',
+        'set theFiles to (choose {kind} with prompt "Pick {kind}(s)" with multiple selections allowed)',
         'set out to ""',
         "repeat with f in theFiles",
         '  set out to out & POSIX path of f & "\\n"',
@@ -37,9 +37,10 @@ def is_media(path: str | Path) -> bool:
     return Path(path).suffix.lower() in MEDIA_EXTENSIONS
 
 
-def pick_files(*, multiple: bool) -> list[str]:
-    """Show the native macOS "choose file" dialog; an empty list means the user cancelled."""
-    result = run_tool(["osascript", "-e", _PICK_MANY if multiple else _PICK_ONE], timeout=300, check=False)
+def pick_files(*, multiple: bool, directory: bool = False) -> list[str]:
+    """Show a native macOS file or folder dialog; an empty list means the user cancelled."""
+    script = (_PICK_MANY if multiple else _PICK_ONE).format(kind="folder" if directory else "file")
+    result = run_tool(["osascript", "-e", script], timeout=300, check=False)
     if result.returncode != 0:
         return []
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
