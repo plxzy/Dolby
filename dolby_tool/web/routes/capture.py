@@ -1,4 +1,4 @@
-"""TV.app playback capture: a live `log stream` over WebSocket, plus parsing of saved logs."""
+"""TV.app playback capture over WebSocket (`log stream` for admins, system sampler for all), saved-log parsing."""
 
 import asyncio
 import contextlib
@@ -7,7 +7,14 @@ from typing import Any, Literal
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from ...capture import LOCAL_PLAYER_PREDICATE, PREDICATE, LogCapture, summarize_log_lines
+from ...capture import (
+    LOCAL_PLAYER_PREDICATE,
+    PLAYER_PROCESSES,
+    PREDICATE,
+    LogCapture,
+    SystemSampler,
+    summarize_log_lines,
+)
 from ...common import ToolError
 
 router = APIRouter(tags=["capture"])
@@ -29,14 +36,17 @@ class CaptureHub:
         self._owner: object | None = None
         self._lock = asyncio.Lock()
 
-    async def start(self, owner: object, predicate: str) -> asyncio.Queue[dict[str, Any]]:
+    async def start(self, owner: object, profile: str) -> tuple[asyncio.Queue[dict[str, Any]], LogCapture]:
         async with self._lock:
             await self._stop_locked()
-            capture = LogCapture(predicate=predicate)
+            capture = LogCapture(
+                predicate=_PREDICATES.get(profile, PREDICATE),
+                system=SystemSampler(PLAYER_PROCESSES.get(profile, PLAYER_PROCESSES["tv"])),
+            )
             capture.start(asyncio.get_running_loop())
             queue = capture.subscribe()
             self._capture, self._owner = capture, owner
-            return queue
+            return queue, capture
 
     async def stop(self, owner: object | None = None) -> dict[str, Any] | None:
         """Stop the capture (only if `owner` started it) and return its summary."""
@@ -49,7 +59,7 @@ class CaptureHub:
         capture, self._capture, self._owner = self._capture, None, None
         if capture is None:
             return None
-        # stop() waits for `log` to exit and joins the reader thread — keep it off the event loop.
+        # stop() waits for `log` and the sampler threads to exit — keep it off the event loop.
         return await asyncio.to_thread(capture.stop)
 
 
@@ -57,7 +67,8 @@ class CaptureHub:
 async def tvlog_socket(ws: WebSocket) -> None:
     """Commands: `{"cmd": "start" | "stop" | "ping"}`.
 
-    Replies: `started` (with the predicate), streamed `event`s, the final `summary`, `pong`, or `error`.
+    Replies: `started` (with the predicate, `log_access` and `capture_mode`), streamed `event`s
+    (sampler events carry `source: "system"`), the final `summary`, `pong`, or `error`.
     """
     hub: CaptureHub = ws.app.state.capture_hub
     await ws.accept()
@@ -74,13 +85,19 @@ async def tvlog_socket(ws: WebSocket) -> None:
                     if pump is not None:
                         pump.cancel()
                     profile = message.get("profile", "tv")
-                    predicate = _PREDICATES.get(profile, PREDICATE)
                     try:
-                        queue = await hub.start(ws, predicate)
+                        queue, capture = await hub.start(ws, profile)
                     except (OSError, ToolError) as e:
                         await ws.send_json({"type": "error", "message": _start_error(e)})
                         continue
-                    await ws.send_json({"type": "started", "predicate": predicate})
+                    await ws.send_json(
+                        {
+                            "type": "started",
+                            "predicate": capture.predicate,
+                            "log_access": capture.log_access,
+                            "capture_mode": capture.capture_mode,
+                        }
+                    )
                     pump = asyncio.create_task(_pump(ws, queue))
                 case "stop":
                     if pump is not None:

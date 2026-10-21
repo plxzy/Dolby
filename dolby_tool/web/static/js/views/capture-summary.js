@@ -419,6 +419,75 @@ function rendererCard(r) {
   });
 }
 
+function systemCard(system) {
+  const { video, display = {}, audio = {}, network, now_playing: playing } = system;
+  const list = (items) => el('ul', { class: 'system-evidence-list' }, items.map((item) => el('li', {}, item)));
+  const group = (title, body, className) => el(
+    'div', { class: ['system-evidence-group', className] },
+    el('h4', { class: 'observed-title' }, title), body,
+  );
+  const measured = (value, unit) => value == null ? null : `${fmt.num(value)} ${unit}`;
+  return card({
+    title: 'System evidence',
+    iconName: 'capture',
+    meta: fmt.plural(system.sample_count ?? 0, 'sample'),
+    body: [
+      notice({
+        tone: 'info',
+        title: system.verdict?.label ?? 'System observations',
+        body: list(system.verdict?.notes ?? []),
+      }),
+      group('Video decode', video ? [
+        el('p', { class: 'card-note' }, video.description),
+        kvList([
+          ['Codec', video.codec],
+          ['Coded resolution', video.coded_resolution],
+          ['Bit depth', measured(video.bit_depth, 'bit')],
+          ['Chroma', video.chroma],
+          ['DRM protection', stateBadge(video.protected, 'Protected', 'Not protected')],
+          ['Player decode', stateBadge(video.decoded_in_player_process, 'Observed', 'Not attributed')],
+        ]),
+      ] : el('p', { class: 'card-note' }, 'No hardware decoder session observed.')),
+      group('Display EDR (any app)', [
+        kvList([
+          ['Video HDR', 'Unconfirmed'],
+          ['EDR active', stateBadge(display.edr_seen, 'Seen', 'Not seen')],
+          ['Max EDR headroom', measured(display.max_edr_headroom, '× SDR')],
+          ['Potential headroom', measured(display.potential_edr_headroom, '× SDR')],
+          ['Panel nits cap', measured(display.max_panel_nits_cap, 'nits')],
+        ]),
+        el('p', { class: 'card-note' }, 'Display-wide: any app or display can put it in EDR mode, so this does not prove the video is HDR.'),
+      ]),
+      group('Audio output', kvList([
+        ['Outputs observed', audio.outputs?.length ? audio.outputs.join(', ') : null],
+        ['Playback assertion', stateBadge(audio.playback_assertion_seen, 'Observed', 'Not observed')],
+      ])),
+      group('Download throughput', network ? [
+        kvList([
+          ['Process', network.process],
+          ['Average download', measured(network.avg_mbps, 'Mbit/s')],
+          ['Peak download', measured(network.peak_mbps, 'Mbit/s')],
+          ['Received', measured(network.received_mb, 'MB')],
+        ]),
+        el('p', { class: 'card-note' }, 'Measured process downloads, not the advertised media bitrate.'),
+      ] : el('p', { class: 'card-note' }, 'No download throughput observed during this capture.')),
+      group('Now Playing', playing ? kvList([
+        ['Show / album', playing.album],
+        ['Title', playing.title],
+        ['Artist', playing.artist],
+        ['Position / duration', `${fmt.duration(playing.elapsed_s)} / ${fmt.duration(playing.duration_s)}`],
+        ['Playback', playing.is_playing == null ? null : playing.is_playing ? 'Playing' : 'Paused'],
+      ].filter(([, value]) => value != null)) : el('p', { class: 'card-note' },
+        system.now_playing_unavailable || 'No Now Playing metadata observed.')),
+      group('Opened media files', system.media_files?.length ? list(system.media_files)
+        : el('p', { class: 'card-note' }, 'No media files observed. Streaming media may not expose a local file.')),
+      system.not_observable?.length > 0 && group(
+        'Needs administrator', list(system.not_observable), 'system-admin-note',
+      ),
+    ],
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Summary
 
@@ -430,7 +499,7 @@ export function renderSummary(summary, { origin }) {
   const p = summary.playback;
   const facts = join(
     origin,
-    fmt.plural(summary.event_count, 'event'),
+    fmt.plural((summary.event_count ?? 0) + (summary.system_event_count ?? 0), 'event'),
     summary.duration_s ? `${fmt.num(summary.duration_s, 1)} s` : null,
   );
 
@@ -450,6 +519,10 @@ export function renderSummary(summary, { origin }) {
           JSON.stringify(
             {
               event_count: summary.event_count,
+              system_event_count: summary.system_event_count,
+              capture_mode: summary.capture_mode,
+              log_access: summary.log_access,
+              system: summary.system,
               events_returned: returned,
               events_dropped: dropped,
               raw_event_limit: limit,
@@ -464,7 +537,7 @@ export function renderSummary(summary, { origin }) {
     ]),
   );
 
-  if (!p || !Object.keys(p).length) {
+  if ((!p || !Object.keys(p).length) && !summary.system) {
     return el(
       'div',
       { class: 'capture-summary-body' },
@@ -477,29 +550,29 @@ export function renderSummary(summary, { origin }) {
     );
   }
 
-  const evidence = p.renderer_evidence;
-  const tiles = [
+  const evidence = p?.renderer_evidence;
+  const tiles = p ? [
     sourceVerdict(p),
     videoVerdict(p),
     audioVerdict(p),
     evidence && spatialVerdict(evidence),
     p.selected_hls_audio_group && groupVerdict(p),
     p.downloaded_hls_verdict && movpkgVerdict(p),
-  ];
+  ] : [];
   return el(
     'div',
     { class: 'capture-summary-body' },
     header,
-    el('ul', { class: 'verdicts', 'aria-label': 'Playback verdicts' }, tiles),
-    p.dv_diagnosis &&
+    p && el('ul', { class: 'verdicts', 'aria-label': 'Playback verdicts' }, tiles),
+    p?.dv_diagnosis &&
       notice({
         tone: p.dolby_vision_active === false ? 'warn' : 'info',
         title: 'Video pipeline',
         body: p.dv_diagnosis,
       }),
-    p.capture_quality?.likely_missed_audio_init &&
+    p?.capture_quality?.likely_missed_audio_init &&
       notice({ tone: 'warn', title: 'Audio initialisation probably missed', body: p.capture_quality.note }),
-    el(
+    p && el(
       'div',
       { class: 'summary-grid' },
       playbackCard(p, { wide: !p.selected_hls_audio_group }),
@@ -507,8 +580,9 @@ export function renderSummary(summary, { origin }) {
       audioCard(p),
       evidence && rendererCard(evidence),
     ),
-    jsonDrawer(() => summary.events ?? [], {
-      label: 'Raw events',
+    summary.system && systemCard(summary.system),
+    (!summary.system || summary.event_count > 0) && jsonDrawer(() => summary.events ?? [], {
+      label: 'Raw log events',
       meta:
         dropped > 0
           ? `Newest ${returned} of ${summary.event_count} — ${dropped} older dropped (cap ${limit})`

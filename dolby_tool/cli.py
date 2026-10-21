@@ -15,8 +15,10 @@ from . import __version__
 from .analysis import InspectError, compare_files, compare_markdown, inspect_file, spec_markdown
 from .capture import (
     LOCAL_PLAYER_PREDICATE,
+    PLAYER_PROCESSES,
     PREDICATE,
     LogCapture,
+    SystemSampler,
     summarize_log_file,
     tvlog_summary_markdown,
 )
@@ -212,8 +214,9 @@ def _tvlog_capture(argv: list[str]) -> None:
     parser.add_argument("--json", action="store_true", help="Print JSON instead of Markdown.")
     args = parser.parse_args(argv)
 
-    print(f"Capturing {args.profile} playback logs for {args.seconds:g}s...", file=sys.stderr)
-    with LogCapture(predicate=PREDICATES[args.profile]) as capture:
+    capture = LogCapture(predicate=PREDICATES[args.profile], system=SystemSampler(PLAYER_PROCESSES[args.profile]))
+    _announce_capture(capture, args.profile, args.seconds)
+    with capture:
         _sleep(args.seconds)
         summary = capture.stop()
     _finish_capture(summary, output=args.output, as_json=args.json)
@@ -317,8 +320,9 @@ def _hls_package_capture(argv: list[str]) -> None:
         url = playlist_url(server, args.playlist)
         print(f"Serving HLS from {args.output_dir}", file=sys.stderr, flush=True)
         print(f"Opening QuickTime URL: {url}", file=sys.stderr, flush=True)
-        print(f"Capturing local-player playback logs for {args.seconds:g}s...", file=sys.stderr, flush=True)
-        with LogCapture(predicate=LOCAL_PLAYER_PREDICATE) as capture:
+        capture = LogCapture(predicate=LOCAL_PLAYER_PREDICATE, system=SystemSampler(PLAYER_PROCESSES["local-player"]))
+        _announce_capture(capture, "local-player", args.seconds)
+        with capture:
             open_hls_url(url, "quicktime")
             _sleep(args.seconds)
             summary = capture.stop()
@@ -356,6 +360,15 @@ def _sleep(seconds: float) -> None:
         time.sleep(max(seconds, 0))
     except KeyboardInterrupt:
         pass
+
+
+def _announce_capture(capture: LogCapture, profile: str, seconds: float) -> None:
+    """Say up front whether the unified log is in reach; without admin only the system sampler runs."""
+    access = capture.log_access
+    sources = "playback logs + system evidence" if access["available"] else "system evidence only"
+    print(f"Capturing {profile} {sources} for {seconds:g}s...", file=sys.stderr, flush=True)
+    if not access["available"]:
+        print(f"  log stream skipped: {access['reason']}", file=sys.stderr, flush=True)
 
 
 def _finish_capture(summary: dict[str, Any], *, output: str | None, as_json: bool) -> None:

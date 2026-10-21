@@ -619,8 +619,10 @@ def tvlog_summary_markdown(summary: dict[str, Any]) -> str:
     """Render a compact Markdown summary for CLI use."""
     playback = summary.get("playback") or {}
     renderer = playback.get("renderer_evidence") or {}
-    lines = [
-        "# TV/log playback summary\n",
+    lines = ["# TV/log playback summary\n"]
+    if (access := summary.get("log_access")) and not access.get("available"):
+        lines.append(f"- log capture: `skipped` — {access.get('reason')}")
+    lines += [
         f"- events parsed: `{summary.get('event_count', 0)}`",
         f"- source: `{playback.get('source')}`",
     ]
@@ -633,7 +635,34 @@ def tvlog_summary_markdown(summary: dict[str, Any]) -> str:
         lines += [f"- {label}: `{renderer[key]}`" for key, label in _RENDERER_LINES if renderer.get(key) is not None]
         if layouts := renderer.get("auspatial_channel_layouts"):
             lines.append("- AUSpatialMixer layouts: " + ", ".join(f"`{layout}`" for layout in layouts))
+    if system := summary.get("system"):
+        lines += _system_markdown(system)
     return "\n".join(lines) + "\n"
+
+
+def _system_markdown(system: dict[str, Any]) -> list[str]:
+    """The non-admin `system` block (see `capture.system`)."""
+    lines = ["\n## System evidence (no admin needed)\n", f"- verdict: `{system['verdict']['label']}`"]
+    if video := system.get("video"):
+        lines.append(f"- video decode: `{video['description']}`")
+    display = system.get("display") or {}
+    lines.append(
+        f"- display EDR (any app, not proof of HDR video): `{display.get('edr_seen')}` "
+        f"(max headroom `{display.get('max_edr_headroom')}`, panel cap `{display.get('max_panel_nits_cap')}` nits)"
+    )
+    if outputs := (system.get("audio") or {}).get("outputs"):
+        lines.append("- audio output: " + ", ".join(f"`{o}`" for o in outputs))
+    if network := system.get("network"):
+        lines.append(
+            f"- download: `{network['avg_mbps']}` Mbit/s avg, `{network['peak_mbps']}` peak ({network['process']})"
+        )
+    if now := system.get("now_playing"):
+        title = " — ".join(str(part) for part in (now.get("album"), now.get("title")) if part)
+        lines.append(f"- now playing: `{title}`")
+    lines += [f"- opened file: `{path}`" for path in system.get("media_files") or []]
+    lines += [f"- note: {note}" for note in system["verdict"]["notes"]]
+    lines += [f"- needs admin log: {item}" for item in system.get("not_observable") or []]
+    return lines
 
 
 def _format_audio_summary(audio: dict[str, Any]) -> str:
