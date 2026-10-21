@@ -191,6 +191,8 @@ class FakeCapture:
 
     def __init__(self, predicate: str, **_kwargs):
         self.predicate = predicate
+        self.log_access = {"available": False, "reason": "standard account"}
+        self.capture_mode = "system"
         self.stopped = 0
         self.queue: asyncio.Queue | None = None
         FakeCapture.instances.append(self)
