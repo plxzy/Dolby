@@ -37,6 +37,7 @@ let activeSession = null;
 let latestReport = null;
 let userPaused = false;
 let pausedByHost = false;
+let hostHidden = false; // the embedding page has collapsed the inspector
 let renderTimer = null;
 
 export function init({ capabilities }) {
@@ -187,6 +188,11 @@ async function inspectFile(file) {
         }
       },
     });
+    // The host may have hidden the embed while the session modules loaded.
+    if (hostHidden) {
+      pausedByHost = true;
+      activeSession.pause();
+    }
   } catch (error) {
     if (id !== requestId) return;
     bar.fail(error.message);
@@ -204,7 +210,7 @@ function sessionBar() {
     onclick: () => {
       if (!activeSession || latestReport?.terminal) return;
       pausedByHost = false;
-      if (latestReport?.state === 'running') {
+      if (isRunning()) {
         userPaused = true;
         activeSession.pause();
       } else {
@@ -247,16 +253,21 @@ function sessionBar() {
   };
 }
 
+// Before the worker's first report a started session is running.
+const isRunning = () => !latestReport || (!latestReport.terminal && latestReport.state === 'running');
+
 export function pauseFromHost() {
-  if (!activeSession || userPaused || latestReport?.state !== 'running') return;
+  hostHidden = true;
+  if (!activeSession || userPaused || !isRunning()) return;
   pausedByHost = true;
   activeSession.pause();
 }
 
 export function resumeFromHost() {
+  hostHidden = false;
   if (!activeSession || !pausedByHost || userPaused) return;
   pausedByHost = false;
-  if (latestReport?.state === 'paused' || latestReport?.state === 'running') activeSession.resume();
+  if (!latestReport || latestReport.state === 'paused' || latestReport.state === 'running') activeSession.resume();
 }
 
 // ---------------------------------------------------------------------------
