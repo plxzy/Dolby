@@ -146,7 +146,7 @@
         <header class="view-header">
           <div class="view-heading">
             <h1 id="capture-title">TV Capture</h1>
-            <p>Stream TV.app’s playback logs and see what was really decoded — not what the file claims.</p>
+            <p>Capture TV.app’s decode, HDR and playback evidence — with detailed logs when running as an administrator.</p>
           </div>
           <div class="view-actions">
             <button class="btn" type="button" id="capture-import"><span data-icon="import" data-icon-size="16"></span>Import saved log…</button>
@@ -166,6 +166,7 @@
         </div>
 
         <div id="capture-platform"></div>
+        <div id="capture-mode"></div>
 
         <div class="capture-grid">
           <section class="card timeline-card" aria-labelledby="timeline-title">
@@ -174,7 +175,7 @@
             </header>
             <div class="timeline-scroller" id="capture-scroller">
               <ol class="timeline" id="capture-events" role="log" aria-live="off" aria-labelledby="timeline-title"></ol>
-              <p class="timeline-empty">Events appear here as TV.app reports them.</p>
+              <p class="timeline-empty">Playback logs and system evidence appear here during capture.</p>
             </div>
             <button class="btn btn-sm jump-latest" type="button" id="capture-jump" hidden><span data-icon="arrowDown" data-icon-size="14"></span>Jump to latest</button>
           </section>

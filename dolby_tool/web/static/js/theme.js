@@ -42,7 +42,10 @@ export function initTheme(form) {
     if (!MODES.has(next)) return;
     storeMode(next);
     const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (document.startViewTransition && !reduceMotion) document.startViewTransition(() => applyMode(next));
-    else applyMode(next);
+    if (document.startViewTransition && !reduceMotion) {
+      const transition = document.startViewTransition(() => applyMode(next));
+      // Resizing or a second theme change can skip the animation; the theme still applies.
+      transition.ready.catch(() => {});
+    } else applyMode(next);
   });
 }

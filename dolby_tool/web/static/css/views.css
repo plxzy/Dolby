@@ -744,7 +744,8 @@
   font-size: var(--text-xs);
 }
 
-#capture-platform:not(:empty) {
+#capture-platform:not(:empty),
+#capture-mode:not(:empty) {
   margin-bottom: var(--space-4);
 }
 
@@ -834,30 +835,38 @@
   content: '';
 }
 
+.event[data-kind='system_network'] .event-kind,
 .event[data-kind='hls_variant'] .event-kind {
   --kind: var(--series-1);
 }
 
+.event[data-kind='system_decoder'] .event-kind,
 .event[data-kind='codec_type'] .event-kind {
   --kind: var(--series-2);
 }
 
+.event[data-kind='system_audio'] .event-kind,
 .event[data-kind='audio_format'] .event-kind {
   --kind: var(--series-3);
 }
 
+.event[data-kind='system_display'] .event-kind,
 .event[data-kind='renderer_hint'] .event-kind {
   --kind: var(--series-4);
 }
 
+.event[data-kind='system_process'] .event-kind,
+.event[data-kind='system_playback'] .event-kind,
 .event[data-kind='pipeline_engine'] .event-kind {
   --kind: var(--series-5);
 }
 
+.event[data-kind='system_file'] .event-kind,
 .event[data-kind='file_player'] .event-kind {
   --kind: var(--series-6);
 }
 
+.event[data-kind='system_now_playing'] .event-kind,
 .event[data-kind='luma_chroma'] .event-kind {
   --kind: var(--series-7);
 }
@@ -1022,6 +1031,23 @@
 .evidence-kind {
   color: var(--text-3);
   font-size: var(--text-xs);
+}
+
+.system-evidence-group {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.system-evidence-list {
+  padding-inline-start: var(--space-4);
+  list-style: disc;
+  overflow-wrap: anywhere;
+}
+
+.system-admin-note {
+  color: var(--text-3);
+  font-size: var(--text-sm);
 }
 
 @media (max-width: 1100px) {

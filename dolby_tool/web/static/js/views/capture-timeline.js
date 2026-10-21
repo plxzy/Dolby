@@ -18,6 +18,14 @@ const KINDS = {
   pipeline_engine: 'Engine',
   file_player: 'File player',
   luma_chroma: 'Luma/chroma',
+  system_process: 'Player',
+  system_decoder: 'HW decode',
+  system_display: 'Display HDR',
+  system_playback: 'Playback',
+  system_audio: 'Audio output',
+  system_file: 'Media file',
+  system_now_playing: 'Now Playing',
+  system_network: 'Download',
 };
 
 const on = (value, yes = 'on', no = 'off') => (value == null ? null : value ? yes : no);
@@ -167,11 +175,16 @@ export class Timeline {
 
   #append(event, animate) {
     const text = describeEvent(event);
-    const key = `${event.kind}\u0000${text}`;
+    const key = event.kind === 'system_network'
+      ? `${event.kind}\u0000${event.pid}`
+      : `${event.kind}\u0000${text}`;
     if (this.#last?.key === key) {
       this.#last.count += 1;
       this.#last.counter ??= this.#last.row.appendChild(el('span', { class: 'event-repeat' }));
       this.#last.counter.textContent = `×${this.#last.count}`;
+      this.#last.row.querySelector('.event-text').textContent = text;
+      this.#last.row.querySelector('time').textContent = eventTime(event);
+      this.#last.row.title = event.raw ?? '';
       return;
     }
     const row = el(

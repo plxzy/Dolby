@@ -1,6 +1,6 @@
 /**
- * TV Capture view: stream TV.app's unified log over a WebSocket, or import a
- * saved log, and render what was actually decoded. Exactly one socket is live
+ * TV Capture view: stream TV.app's system evidence and available unified logs,
+ * or import a saved log, and render what was actually decoded. One socket is live
  * at a time, and every handler ignores events from a socket that is no longer
  * current — so an old socket closing can never reset a newer capture.
  */
@@ -44,6 +44,7 @@ export function init({ capabilities }) {
     counter: $('#capture-counter'),
     elapsed: $('#capture-elapsed'),
     platform: $('#capture-platform'),
+    mode: $('#capture-mode'),
     summary: $('#capture-summary'),
     timelineTitle: $('#timeline-title'),
   };
@@ -102,6 +103,7 @@ function resetSession(title) {
   setCount(0);
   ui.elapsed.textContent = '';
   ui.timelineTitle.textContent = title;
+  replace(ui.mode);
 }
 
 // ---------------------------------------------------------------------------
@@ -154,6 +156,8 @@ function handleMessage(raw) {
   switch (message?.type) {
     case 'started':
       setState('capturing');
+      showMode(message);
+      replace(ui.summary, waitingState());
       break;
     case 'event':
       if (message.event) {
@@ -164,7 +168,8 @@ function handleMessage(raw) {
     case 'summary':
       closeSocket();
       showSummary(message.summary, 'Live capture');
-      setCount(message.summary?.event_count ?? eventCount);
+      setCount((message.summary?.event_count ?? 0) + (message.summary?.system_event_count ?? 0));
+      showMode(message.summary);
       setState('stopped');
       break;
     case 'error':
@@ -173,6 +178,25 @@ function handleMessage(raw) {
     default:
       break; // "pong" and anything newer need no action.
   }
+}
+
+function showMode(capture) {
+  const mode = capture?.capture_mode;
+  const label = { system: 'System evidence', 'log+system': 'Log + system evidence', log: 'Unified log' }[mode];
+  if (state === 'capturing' && label) ui.pillLabel.textContent = `Capturing · ${label}`;
+  replace(
+    ui.mode,
+    mode === 'system' && notice({
+      tone: 'info',
+      title: capture.system ? 'System evidence capture' : 'Capturing system evidence',
+      body: [
+        el('p', {}, capture.log_access?.reason || 'The macOS unified log needs an administrator account.'),
+        el('p', {}, capture.system
+          ? 'System evidence was collected instead. Log-only details are listed under “Needs administrator” below.'
+          : 'System evidence is being collected instead: hardware decode, display HDR, audio output and downloads. Dolby Vision vs HDR10, audio codec and Atmos/spatial rendering need the administrator log.'),
+      ],
+    }),
+  );
 }
 
 function fail(message) {
@@ -220,8 +244,8 @@ function idleState() {
     iconName: 'capture',
     title: 'No capture yet',
     body:
-      'Press Start, then play something in TV.app. When you stop, you’ll see what was actually decoded — ' +
-      'Dolby Vision, FourCC, audio format and spatial rendering.',
+      'Press Start, then play something in TV.app. Capture collects system evidence for any account, ' +
+      'plus detailed playback logs for administrators. Stop to see decode, HDR, audio output and download evidence.',
   });
 }
 
@@ -239,8 +263,8 @@ function platformNote() {
     iconName: 'help',
     title: 'Live capture needs macOS',
     body: withCode(
-      'It streams TV.app’s unified log with `log stream`, which only exists on macOS. ' +
-        'Use “Import saved log…” to load one saved on a Mac and get the same summary.',
+      'It samples macOS playback and display state, and adds `log stream` for administrator accounts. ' +
+        'Use “Import saved log…” to load a log saved on a Mac.',
     ),
   });
 }
