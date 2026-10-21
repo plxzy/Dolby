@@ -20,7 +20,7 @@ const KINDS = {
   luma_chroma: 'Luma/chroma',
   system_process: 'Player',
   system_decoder: 'HW decode',
-  system_display: 'Display HDR',
+  system_display: 'Display EDR',
   system_playback: 'Playback',
   system_audio: 'Audio output',
   system_file: 'Media file',

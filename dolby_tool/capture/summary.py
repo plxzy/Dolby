@@ -647,8 +647,8 @@ def _system_markdown(system: dict[str, Any]) -> list[str]:
         lines.append(f"- video decode: `{video['description']}`")
     display = system.get("display") or {}
     lines.append(
-        f"- HDR presented: `{display.get('hdr_presented')}` (max EDR headroom `{display.get('max_edr_headroom')}`, "
-        f"panel cap `{display.get('max_panel_nits_cap')}` nits)"
+        f"- display EDR (any app, not proof of HDR video): `{display.get('edr_seen')}` "
+        f"(max headroom `{display.get('max_edr_headroom')}`, panel cap `{display.get('max_panel_nits_cap')}` nits)"
     )
     if outputs := (system.get("audio") or {}).get("outputs"):
         lines.append("- audio output: " + ", ".join(f"`{o}`" for o in outputs))

@@ -52,11 +52,13 @@ SAMPLE_INTERVAL_S = 2.0
 NOW_PLAYING_INTERVAL_S = 4.0
 PROBE_TIMEOUT_S = 8.0
 
-# EDR headroom of an SDR desktop sits at 1.0–1.3 depending on brightness; HDR video
-# pushes it to the panel's potential (up to 16 on XDR panels).
-HDR_HEADROOM_THRESHOLD = 2.0
-# The built-in XDR panel caps SDR at 300 nits (some models 500); HDR playback lifts it.
-HDR_NITS_CAP_THRESHOLD = 600
+# EDR headroom of an SDR desktop sits at 1.0–1.3 depending on brightness; HDR content
+# pushes it toward the panel's potential (up to 16 on XDR panels). Both signals are
+# display-wide: any app's HDR content (or another display) moves them, so they show
+# that EDR was active, never that the player's video was HDR.
+EDR_HEADROOM_THRESHOLD = 2.0
+# The built-in XDR panel caps SDR at 300 nits (some models 500); EDR content lifts it.
+EDR_NITS_CAP_THRESHOLD = 600
 
 # Player processes the sampler follows, per capture profile (the `log stream` predicate's
 # counterparts). Safari decodes in its WebKit GPU process.
@@ -374,8 +376,8 @@ class SystemState:
         self.decoder_sessions: dict[tuple[Any, ...], dict[str, Any]] = {}
         self.max_headroom: float | None = None
         self.potential_headroom: float | None = None
-        self.hdr_seen = False
-        self.hdr_active: bool | None = None
+        self.edr_seen = False
+        self.edr_active: bool | None = None
         self.max_nits_cap: float | None = None
         self.playing_seen = False
         self.audio_outputs: list[str] = []
@@ -427,11 +429,11 @@ class SystemState:
             self.max_nits_cap = max(self.max_nits_cap or nits_cap, nits_cap)
         if headroom is None and nits_cap is None:
             return []
-        active = (headroom or 0) >= HDR_HEADROOM_THRESHOLD or (nits_cap or 0) >= HDR_NITS_CAP_THRESHOLD
-        self.hdr_seen |= active
-        if active == self.hdr_active:
+        active = (headroom or 0) >= EDR_HEADROOM_THRESHOLD or (nits_cap or 0) >= EDR_NITS_CAP_THRESHOLD
+        self.edr_seen |= active
+        if active == self.edr_active:
             return []
-        self.hdr_active = active
+        self.edr_active = active
         detail = ", ".join(
             part
             for part in (
@@ -440,8 +442,8 @@ class SystemState:
             )
             if part
         )
-        text = f"HDR presentation {'on' if active else 'off'} ({detail})"
-        return [_event("system_display", text, hdr_active=active, edr_headroom=headroom, nits_cap=nits_cap)]
+        text = f"Display EDR {'active' if active else 'inactive'}, any app ({detail})"
+        return [_event("system_display", text, edr_active=active, edr_headroom=headroom, nits_cap=nits_cap)]
 
     def fold_activity(self, activity: dict[str, Any]) -> list[Event]:
         events = []
@@ -508,7 +510,8 @@ class SystemState:
             "decoder_sessions": sessions,
             "video": video,
             "display": {
-                "hdr_presented": self.hdr_seen,
+                # Display-wide, not attributable to the player: see EDR_HEADROOM_THRESHOLD.
+                "edr_seen": self.edr_seen,
                 "max_edr_headroom": _round(self.max_headroom),
                 "potential_edr_headroom": _round(self.potential_headroom),
                 "max_panel_nits_cap": self.max_nits_cap,
@@ -518,7 +521,7 @@ class SystemState:
             "media_files": self.media_files,
             "now_playing": _now_playing_fields(self.now_playing) if self.now_playing else None,
             "now_playing_unavailable": self.now_playing_unavailable,
-            "verdict": _verdict(video, self.hdr_seen, network, self.media_files, log_available=log_available),
+            "verdict": _verdict(video, self.edr_seen, network, self.media_files, log_available=log_available),
             "not_observable": [] if log_available else list(NOT_OBSERVABLE_WITHOUT_LOG),
         }
 
@@ -559,36 +562,44 @@ def _primary_session(sessions: list[dict[str, Any]], pids: set[int]) -> dict[str
 
 def _verdict(
     video: dict[str, Any] | None,
-    hdr_seen: bool,
+    edr_seen: bool,
     network: dict[str, Any] | None,
     media_files: list[str],
     *,
     log_available: bool,
 ) -> dict[str, Any]:
-    notes = []
+    """What was observed, without claiming a dynamic range: no non-admin source ties HDR to the player.
+
+    `hdr` is always "unconfirmed" here; only the log's decoded FourCC (the `playback` block) settles it.
+    """
     if video is None:
         return {
             "label": "no hardware video decode seen",
-            "notes": ["Start the capture, then start playback; paused or SDR software decodes may not register."],
+            "hdr": "unconfirmed",
+            "notes": ["Start the capture, then start playback; paused or software decodes may not register."],
         }
-    ten_bit = (video.get("bit_depth") or 0) >= 10
-    if ten_bit and hdr_seen:
-        label = "HDR video (Dolby Vision or HDR10)"
-        notes.append("10-bit hardware decode while the display presented HDR/EDR content.")
-        if not log_available:
-            notes.append("Telling Dolby Vision from HDR10 needs the decoded FourCC, which only the admin log shows.")
-    elif ten_bit:
-        label = "10-bit video, no HDR presentation seen"
-        notes.append("A 10-bit stream rendered without EDR headroom usually means an SDR tone-mapped path.")
+    depth = f"{video['bit_depth']}-bit " if video.get("bit_depth") else ""
+    notes = []
+    if edr_seen:
+        notes.append(
+            "A display was in EDR (HDR) mode during the capture. That is display-wide — any app or "
+            "display can cause it — so it does not prove this video is HDR."
+        )
     else:
-        label = "SDR video"
+        notes.append("No display entered EDR (HDR) mode during the capture.")
+    if video.get("codec") == "HEVC" and video.get("bit_depth") == 8:
+        notes.append("8-bit HEVC: HDR10 and Dolby Vision HEVC streams are 10-bit.")
+    elif (video.get("bit_depth") or 0) >= 10:
+        notes.append("10-bit decode is required for HDR10/Dolby Vision but is also used for SDR.")
+    if not log_available:
+        notes.append("Whether this is Dolby Vision, HDR10 or SDR needs the decoded FourCC from the admin log.")
     if video.get("protected"):
         notes.append("FairPlay-protected stream (Apple TV+ / iTunes HLS).")
     if network:
         notes.append(f"Measured download {network['avg_mbps']:g} Mbit/s average, {network['peak_mbps']:g} peak.")
     if media_files:
         notes.append("Inspect the opened file for its Dolby Vision profile and Atmos track.")
-    return {"label": label, "notes": notes}
+    return {"label": f"{depth}{video['codec']} hardware decode", "hdr": "unconfirmed", "notes": notes}
 
 
 def _now_playing_fields(info: dict[str, Any]) -> dict[str, Any]:

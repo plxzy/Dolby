@@ -129,25 +129,55 @@ def test_decoder_sessions_of_unrelated_apps_are_ignored():
     assert state.summary()["video"] is None
 
 
-def test_hdr_verdict_needs_ten_bit_decode_and_hdr_presentation():
-    state = _playing_state()
-    assert state.summary()["verdict"]["label"] == "10-bit video, no HDR presentation seen"
-
-    [event] = state.fold_display([{"name": "Built-in", "headroom": 7.26, "potential": 16.0}], nits_cap=1600.0)
-    assert event["kind"] == "system_display" and event["hdr_active"] is True
-    assert state.summary()["verdict"]["label"] == "HDR video (Dolby Vision or HDR10)"
+HDR_DISPLAY = [{"name": "Built-in", "headroom": 7.26, "potential": 16.0}]
+SDR_DISPLAY = [{"name": "Built-in", "headroom": 1.2, "potential": 16.0}]
 
 
-def test_display_events_fire_only_on_hdr_transitions():
+def _state_decoding(**session) -> SystemState:
     state = SystemState(["TV"])
-    sdr = [{"headroom": 1.2, "potential": 16.0}]
-    hdr = [{"headroom": 7.3, "potential": 16.0}]
+    state.fold_pids({86365: "TV"})
+    entry = {"FrameWidth": 1920, "FrameHeight": 1080, "CreationTime": "t", "IOUserClientCreator": "pid 86365, TV"}
+    state.fold_decoders(parse_decoder_sessions(plistlib.dumps([{**entry, **session}])), now=1.0)
+    return state
 
-    assert [e["hdr_active"] for e in state.fold_display(sdr, 300.0)] == [False]
-    assert state.fold_display(sdr, 300.0) == []
-    assert [e["hdr_active"] for e in state.fold_display(hdr, 1600.0)] == [True]
-    assert [e["hdr_active"] for e in state.fold_display(sdr, 300.0)] == [False]
-    assert state.summary()["display"]["hdr_presented"] is True
+
+@pytest.mark.parametrize(
+    ("bit_depth", "display", "nits_cap"),
+    [
+        (10, HDR_DISPLAY, 1600.0),  # HDR stream, or SDR while another app shows HDR
+        (10, SDR_DISPLAY, 300.0),  # 10-bit SDR is a valid encode
+        (8, HDR_DISPLAY, 1600.0),  # another app's HDR photo/video next to an SDR stream
+        (8, SDR_DISPLAY, 300.0),
+    ],
+)
+def test_system_evidence_never_claims_a_dynamic_range(bit_depth, display, nits_cap):
+    state = _state_decoding(LumaBitDepth=bit_depth, CodecType=2)
+    state.fold_display(display, nits_cap=nits_cap)
+    verdict = state.summary()["verdict"]
+
+    assert verdict["hdr"] == "unconfirmed"
+    assert verdict["label"] == f"{bit_depth}-bit HEVC hardware decode"
+    assert not any(word in verdict["label"] for word in ("HDR", "SDR", "Dolby"))
+
+
+def test_display_edr_is_reported_as_display_wide_not_as_video_hdr():
+    state = _state_decoding(LumaBitDepth=8, CodecType=2)
+    [event] = state.fold_display(HDR_DISPLAY, nits_cap=1600.0)
+    notes = " ".join(state.summary()["verdict"]["notes"])
+
+    assert event["edr_active"] is True and "any app" in event["raw"]
+    assert "does not prove this video is HDR" in notes
+    assert "8-bit HEVC" in notes
+
+
+def test_display_events_fire_only_on_edr_transitions():
+    state = SystemState(["TV"])
+
+    assert [e["edr_active"] for e in state.fold_display(SDR_DISPLAY, 300.0)] == [False]
+    assert state.fold_display(SDR_DISPLAY, 300.0) == []
+    assert [e["edr_active"] for e in state.fold_display(HDR_DISPLAY, 1600.0)] == [True]
+    assert [e["edr_active"] for e in state.fold_display(SDR_DISPLAY, 300.0)] == [False]
+    assert state.summary()["display"]["edr_seen"] is True
 
 
 def test_network_rate_is_measured_between_samples_and_survives_a_counter_reset():

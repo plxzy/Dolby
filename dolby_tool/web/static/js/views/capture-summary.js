@@ -448,12 +448,16 @@ function systemCard(system) {
           ['Player decode', stateBadge(video.decoded_in_player_process, 'Observed', 'Not attributed')],
         ]),
       ] : el('p', { class: 'card-note' }, 'No hardware decoder session observed.')),
-      group('Display HDR', kvList([
-        ['HDR presented', stateBadge(display.hdr_presented, 'Presented', 'Not observed')],
-        ['Max EDR headroom', measured(display.max_edr_headroom, '× SDR')],
-        ['Potential headroom', measured(display.potential_edr_headroom, '× SDR')],
-        ['Panel nits cap', measured(display.max_panel_nits_cap, 'nits')],
-      ])),
+      group('Display EDR (any app)', [
+        kvList([
+          ['Video HDR', 'Unconfirmed'],
+          ['EDR active', stateBadge(display.edr_seen, 'Seen', 'Not seen')],
+          ['Max EDR headroom', measured(display.max_edr_headroom, '× SDR')],
+          ['Potential headroom', measured(display.potential_edr_headroom, '× SDR')],
+          ['Panel nits cap', measured(display.max_panel_nits_cap, 'nits')],
+        ]),
+        el('p', { class: 'card-note' }, 'Display-wide: any app or display can put it in EDR mode, so this does not prove the video is HDR.'),
+      ]),
       group('Audio output', kvList([
         ['Outputs observed', audio.outputs?.length ? audio.outputs.join(', ') : null],
         ['Playback assertion', stateBadge(audio.playback_assertion_seen, 'Observed', 'Not observed')],
