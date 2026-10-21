@@ -30,7 +30,7 @@ it behind one local web UI and a scriptable CLI.
 |---|---|
 | **Inspect** | Dolby Vision profile & compatibility (5 / 7 / 8.1 / 8.2 / 8.4), sample-entry FourCC with a TV.app breakage warning, HDR10 mastering display / content light level, HDR10+, every audio track (codec, channels, layout, bitrate, Atmos/JOC), subtitles (default / forced / SDH), container stats. |
 | **Compare** | Ranks several releases with a weighted score (DV, FourCC, HDR10+, Atmos, bitrate, resolution, subtitles), stacked score bars per component, per-dimension winners and adjustable weights. |
-| **TV Capture** | Streams macOS unified logs while TV.app plays and summarises what was *actually* decoded: DV profile, hardware decoder FourCC, audio format, channels, spatialisation, HLS audio group, bitrate. Saved logs can be imported on any OS. |
+| **TV Capture** | Summarises what TV.app *actually* played. Administrators get the macOS unified log: DV profile, hardware decoder FourCC, audio format, channels, spatialisation, HLS audio group, bitrate. Every account, admin or not, also gets system evidence: hardware decode (codec, coded size, bit depth, DRM), HDR/EDR presentation, audio output, measured download rate, Now Playing title and opened media files. Saved logs can be imported on any OS. |
 | **CLI** | Everything above as scriptable commands with Markdown or JSON output, plus `.movpkg` inventory, local fMP4 HLS packaging/serving and an MKV → Apple-TV `.m4v` converter. |
 
 <table>
@@ -61,7 +61,7 @@ uv installs Python 3.14 and the locked dependencies on first run.
 | `dolby-tool [serve] [--host H] [--port N]` | Start the web UI (loopback only by default). |
 | `dolby-tool inspect FILE [--json]` | Dolby Vision / HDR / Atmos / track report for one file. |
 | `dolby-tool compare FILE… [--weight KEY=N] [--json]` | Score and rank several files. |
-| `dolby-tool tvlog-capture [--profile tv\|local-player] [--seconds N]` | Capture playback logs (macOS). |
+| `dolby-tool tvlog-capture [--profile tv\|local-player] [--seconds N]` | Capture playback (macOS): unified log when admin, system evidence always. |
 | `dolby-tool tvlog-parse LOG [--json]` | Summarise a saved `log stream --style compact` capture. |
 | `dolby-tool movpkg PKG` / `movpkg-scan DIR` | Inventory downloaded TV.app `.movpkg` packages (audio groups, completeness, verdict). |
 | `dolby-tool hls-package FILE OUT` | Stream-copy a local file into fMP4 HLS with Apple-friendly master tags. |
@@ -129,7 +129,7 @@ dolby_tool/
 ├── cli.py            command registry (`dolby-tool …`)
 ├── common.py         shared helpers: run_tool/ToolError, ffprobe_json, coercion
 ├── analysis/         inspect (ffprobe → typed MediaSpec), compare (scoring), report (Markdown)
-├── capture/          predicates, parser (log line → event), session (LogCapture), summary
+├── capture/          predicates, parser (log line → event), session (LogCapture), summary, system (non-admin sampler)
 ├── hls/              movpkg inventory, fMP4 packaging, .movpkg flattening, Range server
 ├── convert/          MKV → .m4v mux, MP4 box patching, PGS subtitles, Apple TV metadata
 └── web/              FastAPI app factory, routers, security guards, static/ frontend
@@ -168,5 +168,13 @@ request; Dependabot keeps `uv.lock` and the GitHub Actions up to date.
   Finder, paste a path, or use the native picker.
 - Drag-and-drop resolves names via Spotlight first and falls back to `find(1)`
   over `/Volumes` and common folders (covers external drives Spotlight skips).
-- `log stream` may prompt for permission on first capture.
+- `log stream` only runs for administrators (macOS refuses it for standard
+  accounts, as do Console and `xctrace`). On a standard account TV Capture skips it
+  and collects system evidence only (`ioreg` decoder sessions, EDR headroom,
+  `pmset` assertions, `nettop`, `lsof`, MediaRemote). That evidence cannot tell
+  Dolby Vision from HDR10 or show the HLS variant and Atmos decisions; run as an
+  admin for those.
+- The Now Playing helper (`capture/nowplaying.m`) is compiled with `clang` on first
+  use into `~/Library/Caches/dolby-tool/` and loaded into `/usr/bin/perl`. Without
+  the Command Line Tools, that one field is left out.
 - TV Capture works retroactively: start capture, play in TV.app, then stop.
