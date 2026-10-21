@@ -4,12 +4,13 @@ Apple TV image URLs are templates like
 `https://is1-ssl.mzstatic.com/.../source/{w}x{h}.{f}` — we substitute the requested
 size and format. We always fetch JPEG.
 """
-from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
 
 import httpx
+
+from ...common import to_int
 
 Size = Literal["square", "rectangle", "standard"]
 
@@ -42,7 +43,7 @@ def from_image(image: dict | None) -> Artwork | None:
     if not image or "url" not in image:
         return None
     base = image["url"].replace("{w}x{h}.{f}", "")
-    size = _size_of(int(image.get("width", 1)), int(image.get("height", 1)))
+    size = _size_of(to_int(image.get("width")) or 1, to_int(image.get("height")) or 1)
     return Artwork(url=base + _full_size(size), thumb_url=base + _thumb_size(size), size=size)
 
 

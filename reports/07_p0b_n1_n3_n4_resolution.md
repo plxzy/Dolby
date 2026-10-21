@@ -119,7 +119,7 @@ not in the macOS spatialization pipeline as observed by these probes.
    lever, the `.movpkg` engineering path, and the dylib-injection
    approach are all unnecessary for current macOS/TV.app.
 3. The dtrace gate observed in older sessions
-   (`reports/ISSUE_12_DTRACE_GATE.md`, the older
+   (the removed `ISSUE_12_DTRACE_GATE.md` report, superseded by `01_gate_model.md`; the older
    `dolby-spatial-rendering-gate` memory) reflects a stale build. The
    resolution is "the OS/TV.app caught up," not a workaround.
 4. SpatialProbe and QuickTime + local HLS remain valid as

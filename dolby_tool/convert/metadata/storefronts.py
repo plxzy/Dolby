@@ -1,9 +1,8 @@
 """Storefront / locale lookups, ported from Subler's Storefronts.json + iTunes store mapping."""
-from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 
 _DATA_PATH = Path(__file__).with_name("data") / "Storefronts.json"
@@ -22,14 +21,10 @@ class Store:
     store_code: int
     locale: str
 
-    @property
-    def language2(self) -> str:
-        return self.locale
 
-
-@lru_cache(maxsize=1)
+@cache
 def _table() -> dict[str, dict]:
-    return json.loads(_DATA_PATH.read_text())["data"]
+    return json.loads(_DATA_PATH.read_text(encoding="utf-8"))["data"]
 
 
 def resolve(country: str, language: str | None = None) -> Store:

@@ -7,23 +7,20 @@ Pipeline:
   1. Extract each PGS track from the source MKV with `ffmpeg -c:s copy` to a
      temporary `.sup` file.
   2. Run `bdsup2sub` to produce `.idx`/`.sub` pairs.
-  3. Re-mux the existing MP4 + the new VobSub tracks into a new MP4
-     (`ffmpeg -c copy` again — VobSub is supported by the MP4 muxer as
-     `mov_text`? No — actually MP4 has no standard for VobSub; we add it as
-     a subtitle track with `-c:s copy` and rely on Apple's VobSub support).
+  3. Re-mux the first-pass MP4 plus the new VobSub tracks into a second MP4
+     (`ffmpeg -c copy`). MP4 has no standard VobSub mapping, so the tracks are
+     stream-copied as-is and rely on the player's VobSub support.
 
 This is the one piece of Subler we don't try to faithfully replicate
 in-process — bdsup2sub already does the palette/timing work well.
 """
-from __future__ import annotations
 
-import shutil
-import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from .mux import StreamInfo
+from ..common import ToolError, run_tool, which_any
+from .mux import StreamInfo, discard_on_failure, probe, require_distinct_output, video_tag
 
 
 @dataclass
@@ -33,12 +30,12 @@ class PgsConversionResult:
     reason: str | None = None
 
 
+def _bdsup2sub() -> str | None:
+    return which_any("bdsup2sub", "bdsup2sub++")
+
+
 def have_bdsup2sub() -> bool:
-    return shutil.which("bdsup2sub") is not None or shutil.which("bdsup2sub++") is not None
-
-
-def _bdsup2sub_cmd() -> str:
-    return shutil.which("bdsup2sub") or shutil.which("bdsup2sub++") or "bdsup2sub"
+    return _bdsup2sub() is not None
 
 
 def convert_and_remux(
@@ -46,76 +43,84 @@ def convert_and_remux(
     target_mp4: Path,
     pgs_streams: list[StreamInfo],
     *,
-    output: Path | None = None,
+    output: Path,
 ) -> PgsConversionResult:
-    """Convert PGS → VobSub and remux into a new MP4 alongside `target_mp4`."""
+    """Convert PGS → VobSub and remux `target_mp4` plus the new tracks into `output`.
+
+    `output` must be a fresh path, distinct from both input files.
+    A failed remux leaves no partial `output` behind.
+    """
+    require_distinct_output(source_mkv, output)
+    require_distinct_output(target_mp4, output)
+    if output.exists() or output.is_symlink():
+        raise ValueError(f"Output already exists: {output}")
     if not pgs_streams:
         return PgsConversionResult(converted=0, skipped=0, reason="no PGS streams")
-    if not have_bdsup2sub():
+    bdsup2sub = _bdsup2sub()
+    if bdsup2sub is None:
         return PgsConversionResult(
             converted=0,
             skipped=len(pgs_streams),
             reason="bdsup2sub not installed (brew install bdsup2sub++); PGS dropped",
         )
 
-    output = output or target_mp4
     with tempfile.TemporaryDirectory() as tmp_s:
         tmp = Path(tmp_s)
-        idx_subs: list[tuple[Path, Path, str | None]] = []
+        idx_subs: list[tuple[Path, str | None]] = []
         for s in pgs_streams:
             sup_path = tmp / f"sub_{s.index}.sup"
             extract_cmd = [
-                "ffmpeg", "-hide_banner", "-y",
-                "-i", str(source_mkv),
-                "-map", f"0:{s.index}", "-c:s", "copy",
+                "ffmpeg",
+                "-hide_banner",
+                "-nostdin",
+                "-y",
+                "-i",
+                str(source_mkv),
+                "-map",
+                f"0:{s.index}",
+                "-c:s",
+                "copy",
                 str(sup_path),
             ]
-            r = subprocess.run(extract_cmd, capture_output=True, text=True)
+            r = run_tool(extract_cmd, check=False)
             if r.returncode != 0 or not sup_path.exists():
                 continue
             idx_path = tmp / f"sub_{s.index}.idx"
-            convert_cmd = [_bdsup2sub_cmd(), "-o", str(idx_path), str(sup_path)]
-            r = subprocess.run(convert_cmd, capture_output=True, text=True)
-            sub_path = idx_path.with_suffix(".sub")
-            if r.returncode != 0 or not idx_path.exists() or not sub_path.exists():
+            r = run_tool([bdsup2sub, "-o", str(idx_path), str(sup_path)], check=False)
+            if r.returncode != 0 or not idx_path.exists() or not idx_path.with_suffix(".sub").exists():
                 continue
-            idx_subs.append((idx_path, sub_path, s.language))
+            idx_subs.append((idx_path, s.language))
 
         if not idx_subs:
             return PgsConversionResult(converted=0, skipped=len(pgs_streams), reason="bdsup2sub failed on all tracks")
 
+        try:
+            existing = probe(target_mp4)
+        except (ToolError, ValueError) as e:
+            return PgsConversionResult(
+                converted=0, skipped=len(pgs_streams), reason=f"could not probe {target_mp4.name}: {e}"
+            )
+        # A plain `-c copy` would fall back to `hev1` and drop the Dolby Vision
+        # config box, so re-apply the first pass's sample-entry tag.
+        tag = video_tag(existing.video)
         # `-map 0` re-emits every stream already in target_mp4 — including any
         # existing subtitle tracks — so the new VobSub outputs land at indices
         # offset by the count of subtitles already present.
-        existing_subs = _count_subtitle_streams(target_mp4)
+        existing_subs = sum(1 for s in existing.raw.get("streams", []) if s.get("codec_type") == "subtitle")
 
-        cmd: list[str] = ["ffmpeg", "-hide_banner", "-y", "-i", str(target_mp4)]
-        for idx, _sub, _lang in idx_subs:
+        cmd: list[str] = ["ffmpeg", "-hide_banner", "-nostdin", "-n", "-i", str(target_mp4)]
+        for idx, _lang in idx_subs:
             cmd += ["-i", str(idx)]
         cmd += ["-map", "0"]
-        for i, (_idx, _sub, lang) in enumerate(idx_subs, start=1):
+        for i, (_idx, lang) in enumerate(idx_subs, start=1):
             cmd += ["-map", f"{i}:s"]
             if lang:
                 cmd += [f"-metadata:s:s:{existing_subs + i - 1}", f"language={lang}"]
-        cmd += ["-c", "copy", "-movflags", "+faststart+use_metadata_tags", str(output)]
-        r = subprocess.run(cmd, capture_output=True, text=True)
-        if r.returncode != 0:
-            return PgsConversionResult(
-                converted=0,
-                skipped=len(pgs_streams),
-                reason=f"ffmpeg remux failed: {r.stderr.splitlines()[-3:]}",
-            )
+        cmd += ["-c", "copy", *tag.ffmpeg_args, "-movflags", "+faststart+use_metadata_tags", str(output)]
+        try:
+            with discard_on_failure(output):
+                run_tool(cmd)
+        except ToolError as e:
+            return PgsConversionResult(converted=0, skipped=len(pgs_streams), reason=f"ffmpeg remux failed: {e}")
 
     return PgsConversionResult(converted=len(idx_subs), skipped=len(pgs_streams) - len(idx_subs))
-
-
-def _count_subtitle_streams(mp4: Path) -> int:
-    """Return how many subtitle streams already live in `mp4` (0 if probe fails)."""
-    r = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "s",
-         "-show_entries", "stream=index", "-of", "csv=p=0", str(mp4)],
-        capture_output=True, text=True,
-    )
-    if r.returncode != 0:
-        return 0
-    return sum(1 for line in r.stdout.splitlines() if line.strip())
