@@ -1,0 +1,41 @@
+{
+  "creatingLibrary": {
+    "name": "MediaInfoLib",
+    "version": "26.10",
+    "url": "https://mediaarea.net/MediaInfo"
+  },
+  "media": {
+    "track": [
+      {
+        "@type": "General",
+        "Format": "MPEG-4",
+        "Format_Profile": "Base Media",
+        "CodecID": "isom",
+        "Duration": "20.000",
+        "OverallBitRate": "1993166",
+        "FrameRate": "24.000"
+      },
+      {
+        "@type": "Video",
+        "StreamOrder": "0",
+        "ID": "1",
+        "Format": "HEVC",
+        "Format_Profile": "Main 10",
+        "HDR_Format": "SMPTE ST 2094 App 4",
+        "CodecID": "hvc1",
+        "Duration": "20.000",
+        "BitRate": "1989468",
+        "Width": "1280",
+        "Height": "720",
+        "FrameRate": "24.000",
+        "colour_primaries": "BT.2020",
+        "transfer_characteristics": "PQ",
+        "matrix_coefficients": "BT.2020 non-constant",
+        "MasteringDisplay_ColorPrimaries": "Display P3",
+        "MasteringDisplay_Luminance": "min: 0.0001 cd/m2, max: 1000 cd/m2",
+        "MaxCLL": "1000",
+        "MaxFALL": "400"
+      }
+    ]
+  }
+}
