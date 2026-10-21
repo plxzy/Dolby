@@ -1,0 +1,11 @@
+// Static browser inspector at https://dolby.psporidis.com (assets only, no Worker script).
+// Build first: `uv run dolby-tool browser-build --out dist/browser`, then `npx wrangler deploy`.
+// Security headers come from dist/browser/_headers, written by browser-build.
+{
+  "name": "dolby-inspector",
+  "compatibility_date": "2026-10-21",
+  "assets": { "directory": "./dist/browser", "not_found_handling": "none" },
+  "routes": [{ "pattern": "dolby.psporidis.com", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": false
+}

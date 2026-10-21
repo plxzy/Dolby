@@ -1,0 +1,42 @@
+{
+  "creatingLibrary": {
+    "name": "MediaInfoLib",
+    "version": "26.10",
+    "url": "https://mediaarea.net/MediaInfo"
+  },
+  "media": {
+    "track": [
+      {
+        "@type": "General",
+        "Format": "Matroska",
+        "Duration": "20.000",
+        "OverallBitRate": "1992164",
+        "FrameRate": "24.000"
+      },
+      {
+        "@type": "Video",
+        "StreamOrder": "0",
+        "ID": "1",
+        "Format": "HEVC",
+        "Format_Profile": "Main 10",
+        "HDR_Format": "SMPTE ST 2086",
+        "HDR_Format_Compatibility": "HDR10",
+        "CodecID": "V_MPEGH/ISO/HEVC",
+        "Duration": "20.000000000",
+        "BitRate": "1952520",
+        "Width": "1280",
+        "Height": "720",
+        "FrameRate": "24.000",
+        "Default": "Yes",
+        "Forced": "No",
+        "colour_primaries": "BT.2020",
+        "transfer_characteristics": "PQ",
+        "matrix_coefficients": "BT.2020 non-constant",
+        "MasteringDisplay_ColorPrimaries": "Display P3",
+        "MasteringDisplay_Luminance": "min: 0.0001 cd/m2, max: 1000 cd/m2",
+        "MaxCLL": "1000",
+        "MaxFALL": "400"
+      }
+    ]
+  }
+}

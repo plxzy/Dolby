@@ -159,3 +159,32 @@ export function bindDropzone(zone, { onPaths, onProblem }) {
     if (paths.length) onPaths(paths);
   });
 }
+
+/** Accept browser File objects without resolving or sending their names to a server. */
+export function bindFileDrop(zone, { onFiles }) {
+  let depth = 0;
+  const accepts = (event) => Array.from(event.dataTransfer?.types ?? []).includes('Files');
+  const setActive = (active) => zone.toggleAttribute('data-dragging', active);
+  zone.addEventListener('dragenter', (event) => {
+    if (!accepts(event)) return;
+    event.preventDefault();
+    depth += 1;
+    setActive(true);
+  });
+  zone.addEventListener('dragover', (event) => {
+    if (!accepts(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  });
+  zone.addEventListener('dragleave', () => {
+    depth = Math.max(0, depth - 1);
+    if (!depth) setActive(false);
+  });
+  zone.addEventListener('drop', (event) => {
+    event.preventDefault();
+    depth = 0;
+    setActive(false);
+    const files = Array.from(event.dataTransfer?.files ?? []);
+    if (files.length) onFiles(files);
+  });
+}

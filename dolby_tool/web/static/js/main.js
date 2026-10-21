@@ -4,8 +4,11 @@
  */
 
 import { getJson } from './api.js';
-import { environmentNote } from './components/feedback.js';
+import { environmentNote, notice } from './components/feedback.js';
 import { hydrateIcons } from './components/icon.js';
+import { el } from './dom.js';
+import { initEmbed } from './embed.js';
+import { EMBED, MODE } from './mode.js';
 import { initRouter } from './router.js';
 import { initTheme } from './theme.js';
 import * as capture from './views/capture.js';
@@ -66,9 +69,34 @@ function guardStrayDrops() {
 
 hydrateIcons();
 initTheme(document.getElementById('theme-form'));
+if (EMBED) {
+  document.documentElement.dataset.embed = '';
+  location.hash = '#/inspect';
+}
 initRouter({ fallback: 'inspect', appName: 'dolby·tool' });
 guardStrayDrops();
 
-const capabilities = getJson('/api/capabilities').catch(() => null);
-for (const view of [inspect, compare, capture, convert]) view.init({ capabilities });
-capabilities.then(showCapabilityNotice);
+const capabilities = MODE === 'browser' ? Promise.resolve(null) : getJson('/api/capabilities').catch(() => null);
+if (MODE === 'browser') {
+  inspect.init({ capabilities });
+  document.querySelector('.sidebar-caption').textContent =
+    'Runs in your browser — files are read on this device and never uploaded.';
+  for (const [name, title] of [['compare', 'Compare'], ['capture', 'TV Capture'], ['convert', 'Convert / Tag']]) {
+    const section = document.querySelector(`[data-view="${name}"]`);
+    const header = section.querySelector('.view-header');
+    for (const child of [...section.children]) if (child !== header) child.remove();
+    header.querySelector('.view-actions')?.remove();
+    section.append(
+      notice({
+        tone: 'info',
+        title: 'Runs in the macOS app',
+        body: `${title} needs local tools (ffprobe, ffmpeg or the macOS log) that a web page can’t run.`,
+      }),
+      el('a', { class: 'btn', href: 'https://github.com/plxzy/Dolby#run', target: '_blank', rel: 'noopener' }, 'Get the macOS app'),
+    );
+  }
+  if (EMBED) initEmbed();
+} else {
+  for (const view of [inspect, compare, capture, convert]) view.init({ capabilities });
+  capabilities.then(showCapabilityNotice);
+}
