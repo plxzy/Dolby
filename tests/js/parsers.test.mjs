@@ -71,3 +71,14 @@ test('MP4 FourCC warnings match native wording; MKV never warns', async () => {
   assert.equal(toSpec(changed).video.fourcc_warning, "video sample-entry FourCC is 'hvc1' — TV.app will NOT engage the DV pipeline. This is dual-layer Dolby Vision profile 7, which Apple players do not support at all: convert it to profile 8.1 first (e.g. `dovi_tool -m 2 convert`), then remux with `-tag:v dvh1`.");
   const matroska = await run(mkv()); assert.equal(toSpec(matroska).video.fourcc_warning, null);
 });
+
+test('AC-3/E-AC-3 channel layout comes from dac3/dec3, not the fixed sample-entry count', async () => {
+  const { dolbyChannels } = await import('../../dolby_tool/web/static/js/browser/parsers/mp4.js');
+  // dec3 from a Dolby-authored 5.1 E-AC-3 MP4 whose sample entry says channelcount=2.
+  assert.equal(dolbyChannels('dec3', Uint8Array.from([0x08, 0x00, 0x20, 0x0f, 0x00])), 6);
+  // 5.1 independent substream plus a dependent substream adding Lrs/Rrs (7.1).
+  assert.equal(dolbyChannels('dec3', Uint8Array.from([0x08, 0x00, 0x20, 0x0f, 0x02, 0x80])), 8);
+  // dac3: acmod 2 (stereo), no LFE.
+  assert.equal(dolbyChannels('dac3', Uint8Array.from([0x10, 0x10, 0x00])), 2);
+  assert.equal(dolbyChannels('dec3', Uint8Array.from([0x08, 0x00])), null);
+});
