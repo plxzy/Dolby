@@ -190,6 +190,23 @@ redeploys it on every push to `main` (build `pip install uv && uv run dolby-tool
 browser-build --out dist/browser`, deploy `npx wrangler deploy`); to deploy by hand, run
 `uv run dolby-tool browser-build && npx wrangler deploy`.
 
+The build follows static imports/re-exports from `js/main.js` and adds
+`modulepreload` links for the complete startup graph (including browser-mode UI).
+Worker analysis and MediaInfo/WASM remain on demand after file selection.
+All static files share a SHA-256 content-generation URL,
+`/static/<hash>/…`, with one-year `immutable` browser caching. Relative imports,
+worker URLs and absolute MediaInfo URLs stay in that same generation; a changed
+module, stylesheet or vendored binary changes the generation for the entire tree.
+This trades cache reuse across small releases for simple, skew-free module graphs,
+rather than letting independently stale modules mix under short-TTL caching.
+HTML remains revalidated on every visit. As with other fingerprinted static sites,
+already-open old pages may need a reload if they request an uncached lazy asset
+after a deploy removes that generation; they cannot silently load new-generation
+code under an old URL. Keep prior generations available if uninterrupted old tabs
+across releases become a requirement.
+Cloudflare's [static asset header rules](https://developers.cloudflare.com/workers/static-assets/headers/)
+honour these `_headers` overrides; the local Python preview does not apply them.
+
 Browser Compare accepts two or more files through the picker or drop zone, with no
 uploads or backend API calls. It uses the native comparison weights and scoring
 rules; the same editable weights are remembered locally. Unresolved evidence
