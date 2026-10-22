@@ -509,7 +509,7 @@ function atmosVerdict(tracks) {
     return verdict({
       ...base,
       value: 'Unconfirmed',
-      detail: `${audioSummary(unconfirmed)} · no JOC flag seen`,
+      detail: `${audioSummary(unconfirmed)} · no conclusive Atmos signal`,
       tone: 'unknown',
     });
   }
@@ -532,7 +532,7 @@ function pictureVerdict(video) {
 }
 
 function audioSummary(track) {
-  return [fmt.codecName(track.codec), fmt.channelsLabel(track.channels)].join(' ');
+  return [fmt.codecName(track.codec), track.codec === 'ac4' && track.channel_layout ? fmt.channelLayout(track.channel_layout) : fmt.channelsLabel(track.channels)].join(' ');
 }
 
 // ---------------------------------------------------------------------------

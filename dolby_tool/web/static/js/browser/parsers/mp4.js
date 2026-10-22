@@ -2,6 +2,7 @@ import { codec, track, transfer, primaries, matrix, decodeDovi, configurationEvi
 import { VIDEO_FIELDS } from '../evidence.js';
 import { parseAvcConfig } from './avc.js';
 import { inspectHevcConfig } from './hevc.js';
+import { parseAc4Dsi } from './ac4.js';
 
 const text = (b, p, n = 4) => String.fromCharCode(...b.subarray(p, p + n));
 const view = b => new DataView(b.buffer, b.byteOffset, b.byteLength);
@@ -80,6 +81,8 @@ function parseTrack(b, trak, evidence) {
   const stsd = child(b, stbl, 'stsd');
   const entries = stsd ? [...boxes(b, stsd.data + 8, stsd.end)] : [];
   let dvRecord = false;
+  const ac4Configs = [];
+  let ac4EntriesComplete = true;
   const emit = (fieldId, kind, value, box, note) => evidence.push({ fieldId, kind, value, source: 'MP4 sample description', parser: 'mp4', ranges: box ? [[box.start, box.end]] : [], note });
   for (const [entryIndex, entry] of entries.entries()) {
     let fourcc = entry.type;
@@ -98,6 +101,21 @@ function parseTrack(b, trak, evidence) {
       t.fourcc = entry.type; t.codec = codec(fourcc); t.encrypted = encrypted;
       if (t.kind === 'video') { t.width = view(b).getUint16(entry.data + 24); t.height = view(b).getUint16(entry.data + 26); }
       if (t.kind === 'audio') { t.channels = view(b).getUint16(entry.data + 16); t.sampleRateHz = u32(b, entry.data + 24) / 65536; }
+    }
+    if (fourcc === 'ac-4') {
+      // AC-4's sample-entry channelcount is not its presentation layout.
+      if (entryIndex === 0) { t.channels = null; t.channelLayout = null; }
+      const records = configs.filter(c => c.type === 'dac4');
+      ac4EntriesComplete &&= !encrypted && configs.at(-1)?.end === entry.end && records.length === 1;
+      for (const c of encrypted ? [] : records) {
+        const dsi = parseAc4Dsi(b.subarray(c.data, c.end));
+        ac4Configs.push({ ...dsi, box: c });
+        if (entryIndex === 0 && c === records[0]) {
+          t.channels = dsi.channels; t.channelLayout = dsi.channelLayout;
+          t.sampleRateHz = dsi.sampleRateHz ?? t.sampleRateHz;
+          t.bitRateBps = dsi.bitRateBps;
+        }
+      }
     }
     if (encrypted) continue;
     for (const c of configs) {
@@ -140,6 +158,14 @@ function parseTrack(b, trak, evidence) {
       }
       if (c.type === 'dac3') emit(`audio.${id}.atmos`, 'absent', false, c, "ac3 can't carry Dolby Atmos");
     }
+  }
+  if (ac4Configs.length || t.codec === 'ac4') {
+    const positive = ac4Configs.find(c => c.immersive);
+    const complete = ac4EntriesComplete && ac4Configs.length > 0 && ac4Configs.every(c => c.complete);
+    const kind = positive ? 'signaled' : complete ? 'absent' : ac4Configs.some(c => c.complete) ? 'not_found_in_scope' : 'unsupported';
+    const note = positive?.note || (complete ? ac4Configs.map(c => c.note).join('; ') :
+      `AC-4 configuration incomplete: ${ac4Configs.filter(c => !c.complete).map(c => c.note).join('; ') || 'missing, encrypted, duplicate or damaged dac4 sample description'}`);
+    evidence.push({ fieldId: `audio.${id}.atmos`, kind, value: positive ? true : complete ? false : null, source: 'MP4 AC-4 decoder configuration', parser: 'mp4', ranges: ac4Configs.map(c => [c.box.start, c.box.end]), note });
   }
   if (t.kind === 'video' && !dvRecord && !t.encrypted) emit('video.dolby_vision', entries.length ? 'absent' : 'unsupported', entries.length ? false : null, null, entries.length ? "No Dolby Vision configuration record in the track's sample description" : 'No usable video sample description');
   const stts = child(b, stbl, 'stts');

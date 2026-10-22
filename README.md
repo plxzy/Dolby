@@ -190,6 +190,23 @@ redeploys it on every push to `main` (build `pip install uv && uv run dolby-tool
 browser-build --out dist/browser`, deploy `npx wrangler deploy`); to deploy by hand, run
 `uv run dolby-tool browser-build && npx wrangler deploy`.
 
+The build follows static imports/re-exports from `js/main.js` and adds
+`modulepreload` links for the complete startup graph (including browser-mode UI).
+Worker analysis and MediaInfo/WASM remain on demand after file selection.
+All static files share a SHA-256 content-generation URL,
+`/static/<hash>/…`, with one-year `immutable` browser caching. Relative imports,
+worker URLs and absolute MediaInfo URLs stay in that same generation; a changed
+module, stylesheet or vendored binary changes the generation for the entire tree.
+This trades cache reuse across small releases for simple, skew-free module graphs,
+rather than letting independently stale modules mix under short-TTL caching.
+HTML remains revalidated on every visit. As with other fingerprinted static sites,
+already-open old pages may need a reload if they request an uncached lazy asset
+after a deploy removes that generation; they cannot silently load new-generation
+code under an old URL. Keep prior generations available if uninterrupted old tabs
+across releases become a requirement.
+Cloudflare's [static asset header rules](https://developers.cloudflare.com/workers/static-assets/headers/)
+honour these `_headers` overrides; the local Python preview does not apply them.
+
 Browser Compare accepts two or more files through the picker or drop zone, with no
 uploads or backend API calls. It uses the native comparison weights and scoring
 rules; the same editable weights are remembered locally. Unresolved evidence
@@ -226,6 +243,20 @@ Browser evidence checks distinguish codec signalling from sampled absence:
   of that audio track to be checked without gaps or unsupported syntax, including
   laced Matroska frames and MP4 sample tables/fragments. A non-JOC sample alone
   remains scoped. CRCs and JOC object payloads are not decoded.
+- AC-4 reads `ac4_dsi_v1` in MP4 `dac4` and Matroska `A_AC4` CodecPrivate
+  ([ETSI TS 103 190-2 V1.3.1, Annex E.6/E.10/E.11](https://www.etsi.org/deliver/etsi_ts/103100_103199/10319002/01.03.01_60/ts_10319002v010301p.pdf)).
+  The first presentation's active channel-group mask supplies its layout/count,
+  not the sample entry's channelcount or the sum of alternative presentations.
+  Height channels, immersive stereo (presentation version 2), the immersive-audio
+  indicator, and object-based substream groups are **signalled** evidence, not
+  decoded Atmos objects or proof of Apple playback. A negative requires every
+  presentation and AC-4 sample description to be fully parsed without immersive
+  or object signalling. Missing/truncated DSI, reserved syntax, unsupported
+  versions and unparsed extensions remain scoped/unsupported; Compare keeps
+  their Atmos score interval. Native Compare has no AC-4-specific score or Apple
+  compatibility penalty, so the browser retains the same codec-independent rules.
+  The real Dolby 5.1 test clip resolves to No Atmos; immersive/object/IMS paths
+  have syntax-only unit fixtures and are **unverified on real AC-4 media**.
 
 These deeper checks keep the same range-reader budget and automatic pause. Large
 untagged AVC MKVs may need **Continue deeper** to finish their video SEI and audio

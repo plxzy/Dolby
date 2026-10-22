@@ -2,6 +2,7 @@ const CODES = {
   hvc1: 'hevc', hev1: 'hevc', dvh1: 'hevc', dvhe: 'hevc', 'V_MPEGH/ISO/HEVC': 'hevc',
   avc1: 'h264', avc3: 'h264', dvav: 'h264', dva1: 'h264', 'V_MPEG4/ISO/AVC': 'h264',
   av01: 'av1', V_AV1: 'av1', 'ec-3': 'eac3', A_EAC3: 'eac3', 'ac-3': 'ac3', A_AC3: 'ac3',
+  'ac-4': 'ac4', A_AC4: 'ac4',
   mp4a: 'aac', A_TRUEHD: 'truehd', fLaC: 'flac', A_FLAC: 'flac', Opus: 'opus', A_OPUS: 'opus',
   alac: 'alac', A_ALAC: 'alac', '.mp3': 'mp3', 'A_MPEG/L3': 'mp3', tx3g: 'mov_text', mp4s: 'mov_text',
   'S_TEXT/UTF8': 'subrip', 'S_HDMV/PGS': 'hdmv_pgs_subtitle',
