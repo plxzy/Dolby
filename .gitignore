@@ -15,3 +15,6 @@ harness/.swiftpm/
 # Python cache
 .pytest_cache/
 .ruff_cache/
+
+# Static browser build output
+dist/

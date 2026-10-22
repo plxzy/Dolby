@@ -95,6 +95,56 @@
 
 /* ==== Inspect ============================================================= */
 
+.session-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2);
+  padding: var(--space-5);
+  margin-bottom: var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  overflow-wrap: anywhere;
+}
+
+.session-activity,
+.session-metrics {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.session-bar progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.session-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.session-actions .btn {
+  max-width: 100%;
+  height: auto;
+  min-height: var(--control-height);
+  padding-block: var(--space-2);
+  white-space: normal;
+}
+
+.inspect-drop:has(#inspect-path[hidden]) .path-field {
+  justify-content: center;
+}
+
+.inspect-drop[data-state='result']:has(#inspect-path[hidden]) .path-field {
+  justify-content: flex-start;
+}
+
+.session-result .table td {
+  overflow-wrap: anywhere;
+}
+
 .inspect-drop {
   display: grid;
   justify-items: center;

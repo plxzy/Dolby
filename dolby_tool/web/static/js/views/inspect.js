@@ -10,8 +10,9 @@ import { icon } from '../components/icon.js';
 import { meter } from '../components/meter.js';
 import { dataTable } from '../components/table.js';
 import { $, el, replace } from '../dom.js';
-import { bindDropzone } from '../dragdrop.js';
+import { bindDropzone, bindFileDrop } from '../dragdrop.js';
 import * as fmt from '../format.js';
+import { MODE } from '../mode.js';
 
 // The compare score saturates at 80 Mbps (UHD Blu-ray territory), so the meter shares that scale.
 const BITRATE_SCALE_MBPS = 80;
@@ -31,12 +32,25 @@ let input;
 let output;
 let browse;
 let requestId = 0;
+let fileInput;
+let activeSession = null;
+let latestReport = null;
+let userPaused = false;
+let pausedByHost = false;
+let hostHidden = false; // the embedding page has collapsed the inspector
+let renderTimer = null;
 
 export function init({ capabilities }) {
   form = $('#inspect-form');
   input = $('#inspect-path');
   output = $('#inspect-output');
   browse = $('#inspect-browse');
+
+  if (MODE === 'browser') {
+    initBrowser();
+    reset();
+    return;
+  }
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -58,6 +72,14 @@ export function init({ capabilities }) {
 
 function reset() {
   requestId += 1;
+  activeSession?.stop();
+  activeSession = null;
+  latestReport = null;
+  userPaused = false;
+  pausedByHost = false;
+  clearTimeout(renderTimer);
+  renderTimer = null;
+  if (fileInput) fileInput.value = '';
   input.value = '';
   form.dataset.state = 'empty';
   replace(output, intro());
@@ -94,6 +116,158 @@ async function inspect(rawPath) {
   } finally {
     if (id === requestId) output.removeAttribute('aria-busy');
   }
+}
+
+// ---------------------------------------------------------------------------
+// Browser sessions: keep controls stable while the evidence dashboard changes.
+
+function initBrowser() {
+  input.hidden = true;
+  form.querySelector('[type="submit"]').hidden = true;
+  browse.textContent = 'Choose file…';
+  form.querySelector('.dropzone-intro p').textContent =
+    'Drop a video or choose one. It’s read on this device, never uploaded.';
+  form.querySelector('.dropzone-formats').textContent = 'MP4 · M4V · MOV · MKV · WebM · TS';
+  fileInput = el('input', {
+    type: 'file',
+    accept: 'video/*,.mkv,.mp4,.m4v,.mov,.ts,.m2ts,.webm',
+    'aria-label': 'Choose a video to inspect',
+    hidden: true,
+  });
+  form.append(fileInput);
+  form.addEventListener('submit', (event) => event.preventDefault());
+  browse.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    receiveFiles(Array.from(fileInput.files));
+    fileInput.value = '';
+  });
+  $('#inspect-reset').addEventListener('click', reset);
+  bindFileDrop(form, { onFiles: receiveFiles });
+}
+
+function receiveFiles(files) {
+  if (files.length > 1) toast('Inspect reads one file at a time.', { tone: 'info' });
+  if (files.length) inspectFile(files[0]);
+}
+
+async function inspectFile(file) {
+  activeSession?.stop();
+  activeSession = null;
+  const id = ++requestId;
+  latestReport = null;
+  userPaused = false;
+  pausedByHost = false;
+  clearTimeout(renderTimer);
+  renderTimer = null;
+  form.dataset.state = 'result';
+  const bar = sessionBar();
+  const body = el('div', { class: 'session-result' }, loadingSkeleton());
+  replace(output, bar.node, body);
+  let lastRender = -Infinity;
+  const render = () => {
+    renderTimer = null;
+    if (id !== requestId || !latestReport) return;
+    replace(body, result(toSpec(latestReport)));
+    lastRender = performance.now();
+  };
+  let toSpec;
+  try {
+    const [sessions, reports] = await Promise.all([import('../browser/session.js'), import('../browser/report.js')]);
+    if (id !== requestId) return;
+    toSpec = reports.toSpec;
+    activeSession = sessions.startSession(file, {
+      onReport(report) {
+        if (id !== requestId) return;
+        latestReport = report;
+        bar.update(report);
+        if (report.terminal || performance.now() - lastRender >= 250) {
+          clearTimeout(renderTimer);
+          render();
+        } else if (!renderTimer) {
+          renderTimer = setTimeout(render, 250 - (performance.now() - lastRender));
+        }
+      },
+    });
+    // The host may have hidden the embed while the session modules loaded.
+    if (hostHidden) {
+      pausedByHost = true;
+      activeSession.pause();
+    }
+  } catch (error) {
+    if (id !== requestId) return;
+    bar.fail(error.message);
+    replace(body, notice({ tone: 'danger', title: 'Couldn’t inspect this file', body: error.message }));
+  }
+}
+
+function sessionBar() {
+  const state = el('strong', { class: 'session-state', role: 'status' }, 'Running');
+  const activity = el('p', { class: 'session-activity' }, 'Reading container structure');
+  const metrics = el('p', { class: 'session-metrics tabular' }, 'Read locally: 0 MiB · Unique: 0% of file · 0s');
+  const progress = el('progress', { 'aria-label': 'Inspecting video' });
+  const pause = el('button', {
+    class: 'btn', type: 'button',
+    onclick: () => {
+      if (!activeSession || latestReport?.terminal) return;
+      pausedByHost = false;
+      if (isRunning()) {
+        userPaused = true;
+        activeSession.pause();
+      } else {
+        userPaused = false;
+        activeSession.resume();
+      }
+    },
+  }, 'Pause');
+  const deeper = el('button', {
+    class: 'btn btn-primary', type: 'button', hidden: true,
+    onclick: () => {
+      userPaused = false;
+      pausedByHost = false;
+      activeSession?.deeper();
+    },
+  }, 'Continue deeper (reads up to 2 GB more)');
+  const stop = el('button', { class: 'btn', type: 'button', onclick: () => activeSession?.stop() }, 'Stop');
+  const node = el('section', { class: 'session-bar', 'aria-label': 'Inspection session' },
+    state, activity, metrics, progress, el('div', { class: 'session-actions' }, pause, deeper, stop));
+  return {
+    node,
+    update(report) {
+      const terminal = Boolean(report.terminal);
+      state.textContent = terminal ? 'Done' :
+        report.state === 'paused-at-limit' ? 'Paused at limit' : report.state === 'paused' ? 'Paused' : 'Running';
+      activity.textContent = report.activity;
+      const m = report.metrics;
+      const pct = report.file.size ? Math.min(100, m.uniqueBytes / report.file.size * 100) : 0;
+      metrics.textContent = `Read locally: ${(m.bytesRequested / 1048576).toFixed(1)} MiB · Unique: ${pct.toFixed(1)}% of file · ${Math.floor(m.activeMs / 1000)}s`;
+      pause.textContent = report.state === 'paused' ? 'Resume' : 'Pause';
+      pause.hidden = terminal || report.state === 'paused-at-limit';
+      deeper.hidden = terminal || report.state !== 'paused-at-limit';
+      stop.hidden = terminal;
+      progress.hidden = terminal || report.state !== 'running';
+    },
+    fail(message) {
+      state.textContent = message;
+      pause.hidden = deeper.hidden = stop.hidden = progress.hidden = true;
+    },
+  };
+}
+
+// Before the worker's first report a started session is running.
+const isRunning = () => !latestReport || (!latestReport.terminal && latestReport.state === 'running');
+
+export function pauseFromHost() {
+  hostHidden = true;
+  if (!activeSession || userPaused || !isRunning()) return;
+  pausedByHost = true;
+  activeSession.pause();
+}
+
+export function resumeFromHost() {
+  hostHidden = false;
+  if (!activeSession || !pausedByHost || userPaused) return;
+  pausedByHost = false;
+  if (!latestReport || latestReport.state === 'paused' || latestReport.state === 'running') activeSession.resume();
 }
 
 // ---------------------------------------------------------------------------
@@ -173,13 +347,15 @@ function result(spec) {
       'div',
       { class: 'spec-grid', dataset: { layout: dv.present ? 'dv' : 'plain' } },
       videoCard(spec.video),
-      colorCard(spec.video),
+      colorCard(spec.video, spec.evidence),
       dv.present && dolbyVisionCard(dv),
       containerCard(spec.container),
       audioCard(spec.audio),
       subtitlesCard(spec.subtitles),
+      spec.evidence && evidenceCard(spec),
     ),
-    jsonDrawer(spec, { label: 'Raw JSON', meta: 'The full spec, as returned by /api/inspect' }),
+    (!spec.session || spec.session.terminal) &&
+      jsonDrawer(spec, { label: 'Raw JSON', meta: spec.session ? 'The full spec and analysis evidence' : 'The full spec, as returned by /api/inspect' }),
   );
 }
 
@@ -206,6 +382,21 @@ function resultHeader(spec) {
 
 function verdictTiles(spec) {
   const { video, audio } = spec;
+  if (spec.evidence) {
+    const findings = spec.evidence;
+    const hdrFields = ['video.hdr10_plus', 'video.hdr10.mdcv', 'video.hdr10.cll'].map((id) => findings[id]).filter(Boolean);
+    const hdr = strongestFinding(hdrFields);
+    const atmos = strongestFinding(Object.entries(findings).filter(([id]) => /^audio\..+\.atmos$/.test(id)).map(([, f]) => f));
+    return [
+      evidenceVerdict(findings['video.dolby_vision'], dolbyVisionVerdict(video),
+        { label: 'Dolby Vision', iconName: 'dolbyVision' }, spec.session.activity),
+      fourccVerdict(video),
+      evidenceVerdict(hdr, hdrVerdict(video), { label: 'HDR', iconName: 'hdr' }, spec.session.activity),
+      !atmos && !audio.length && spec.session.terminal ? atmosVerdict(audio) :
+        evidenceVerdict(atmos, atmosVerdict(audio), { label: 'Spatial audio', iconName: 'atmos' }, spec.session.activity),
+      pictureVerdict(video),
+    ];
+  }
   return [
     dolbyVisionVerdict(video),
     fourccVerdict(video),
@@ -213,6 +404,56 @@ function verdictTiles(spec) {
     atmosVerdict(audio),
     pictureVerdict(video),
   ];
+}
+
+function strongestFinding(findings) {
+  const order = ['conflicting', 'observed', 'signaled', 'checking', 'not_found_in_scope', 'unknown', 'unsupported', 'absent'];
+  return order.map((state) => findings.find((finding) => finding.state === state)).find(Boolean);
+}
+
+function evidenceVerdict(finding, legacy, base, activity) {
+  if (!finding) return verdict({ ...base, value: 'Checking…', detail: activity, tone: 'unknown' });
+  if (finding.state === 'signaled' || finding.state === 'observed') {
+    const detail = legacy.querySelector('.verdict-detail');
+    const suffix = finding.state === 'signaled' ? ' · signalled' : ' · seen in stream';
+    if (detail) detail.textContent += suffix;
+    return legacy;
+  }
+  if (finding.state === 'absent') return legacy;
+  const coverage = finding.evidence?.map((entry) => entry.coverage).filter(Boolean).at(-1);
+  const descriptions = {
+    checking: ['Checking…', activity],
+    not_found_in_scope: ['Not seen', coverage ? `in ${coverage}` : finding.summary],
+    conflicting: ['Conflicting', finding.evidence?.map((entry) => entry.note).filter(Boolean).slice(0, 2).join(' · ') || finding.summary],
+    unsupported: ['Can’t check here', finding.limitations?.join(' · ') || finding.summary],
+    unknown: ['Unknown', finding.summary],
+  };
+  const [value, detail] = descriptions[finding.state] ?? descriptions.unknown;
+  return verdict({ ...base, value, detail, tone: finding.state === 'conflicting' ? 'warn' : 'unknown' });
+}
+
+function evidenceCard(spec) {
+  const fieldName = (id) => ({
+    'video.dolby_vision': 'Dolby Vision',
+    'video.hdr10.mdcv': 'Mastering display (MDCV)',
+    'video.hdr10.cll': 'Content light level (CLL)',
+    'video.hdr10_plus': 'HDR10+',
+    'video.transfer': 'Transfer',
+  })[id] ?? id.replace(/^audio\.(.+)\.atmos$/, 'Audio $1 · Atmos');
+  return card({
+    title: 'Evidence', iconName: 'code', className: 'span-full',
+    body: dataTable({
+      caption: 'Analysis evidence', stack: true,
+      columns: [
+        { label: 'Field', value: ([id]) => fieldName(id) },
+        { label: 'State', value: ([, f]) => [f.state, el('span', { class: 'cell-hint' }, f.summary)] },
+        { label: 'Source', value: ([, f]) => [...new Set(f.evidence.map((entry) => entry.source).filter(Boolean))].join(' · ') || fmt.DASH },
+        { label: 'Coverage', value: ([, f]) => [...new Set(f.evidence.map((entry) => entry.coverage).filter(Boolean))].join(' · ') || fmt.DASH },
+        { label: 'Next', value: ([, f]) => [f.next || fmt.DASH, f.limitations.length > 0 && el('span', { class: 'cell-hint' }, f.limitations.join(' · '))] },
+      ],
+      rows: Object.entries(spec.evidence),
+    }),
+  });
 }
 
 function dolbyVisionVerdict(video) {
@@ -339,8 +580,16 @@ function videoCard(video) {
   });
 }
 
-function colorCard(video) {
+function colorCard(video, evidence) {
   const dv = video.dolby_vision ?? {};
+  const rpu = evidence && dv.present && dv.rpu_present == null ? null : dv.present ? Boolean(dv.rpu_present) : false;
+  const item = (label, field, nativeValue) => {
+    if (!evidence) return [label, nativeValue];
+    const finding = evidence[field];
+    const present = ['signaled', 'observed'].includes(finding?.state) ? nativeValue :
+      finding?.state === 'absent' ? false : null;
+    return [label, present, finding?.summary];
+  };
   return card({
     title: 'Colour & HDR',
     iconName: 'color',
@@ -353,10 +602,10 @@ function colorCard(video) {
         ['Pixel format', fmt.pixelFormat(video.pix_fmt), { hint: video.pix_fmt }],
       ]),
       checklist([
-        ['Mastering display (MDCV)', Boolean(video.hdr10?.mdcv)],
-        ['Content light level (CLL)', Boolean(video.hdr10?.cll)],
-        ['HDR10+ dynamic metadata', Boolean(video.hdr10_plus)],
-        ['Dolby Vision RPU', dv.present ? Boolean(dv.rpu_present) : false],
+        item('Mastering display (MDCV)', 'video.hdr10.mdcv', Boolean(video.hdr10?.mdcv)),
+        item('Content light level (CLL)', 'video.hdr10.cll', Boolean(video.hdr10?.cll)),
+        item('HDR10+ dynamic metadata', 'video.hdr10_plus', Boolean(video.hdr10_plus)),
+        item('Dolby Vision RPU', 'video.dolby_vision', rpu),
       ]),
     ],
   });
@@ -498,6 +747,14 @@ function subtitlesCard(tracks) {
 // Clipboard
 
 function summaryText(spec) {
+  if (spec.evidence) {
+    return [
+      `File: ${spec.filename}`,
+      `Size: ${spec.container.size_pretty} | Duration: ${spec.container.duration_pretty}`,
+      `Video: ${spec.video.codec || '—'} | ${spec.video.resolution || '—'} | ${spec.video.fps ?? '—'} fps`,
+      ...Object.entries(spec.evidence).map(([id, finding]) => `${id}: ${finding.state} · ${finding.summary}`),
+    ].join('\n');
+  }
   const { video: v, audio, container } = spec;
   const dv = v.dolby_vision ?? {};
   const lines = [

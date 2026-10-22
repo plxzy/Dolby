@@ -300,3 +300,17 @@
     font-size: var(--text-2xl);
   }
 }
+
+/* The portfolio owns the surrounding navigation and spacing in embed mode. */
+[data-embed] .sidebar {
+  display: none;
+}
+
+[data-embed] .app {
+  grid-template-columns: minmax(0, 1fr);
+  background: none;
+}
+
+[data-embed] .main {
+  padding: var(--space-6) var(--space-4);
+}

@@ -107,6 +107,21 @@ def _is_loopback(host: str) -> bool:
         return host == "localhost"
 
 
+def _browser_build(argv: list[str]) -> None:
+    from .web.browser_build import build_browser
+
+    parser = argparse.ArgumentParser(
+        prog="dolby-tool browser-build",
+        description="Build the static browser inspector: Inspect runs in the visitor's browser, nothing is uploaded.",
+    )
+    parser.add_argument("--out", default="dist/browser", help="Output folder, emptied first (default: dist/browser).")
+    parser.add_argument("--tarball", help="Use this mediainfo.js tarball instead of the cached download.")
+    args = parser.parse_args(argv)
+
+    tarball = Path(args.tarball).expanduser() if args.tarball else None
+    print(build_browser(Path(args.out), tarball=tarball))
+
+
 # ---------------------------------------------------------------------------
 # analysis
 
@@ -379,6 +394,7 @@ def _finish_capture(summary: dict[str, Any], *, output: str | None, as_json: boo
 
 COMMANDS: dict[str, Command] = {
     "serve": Command("Start the web UI (the default when no command is given).", _serve),
+    "browser-build": Command("Build the static browser inspector (no server needed).", _browser_build),
     "inspect": Command("Inspect one file: Dolby Vision, HDR, Atmos, tracks.", _inspect),
     "compare": Command("Score and rank several files against each other.", _compare),
     "tvlog-capture": Command("Capture TV.app / QuickTime playback logs for N seconds (macOS).", _tvlog_capture),
