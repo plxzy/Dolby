@@ -12,7 +12,7 @@ export async function runMediaInfo(mi, reader, size) {
 const numeric = value => value == null || value === '' || !Number.isFinite(Number(value)) ? null : Number(value);
 const yes = value => value == null ? null : /^(yes|true|1)$/i.test(String(value));
 const kindOf = t => ({ Video: 'video', Audio: 'audio', Text: 'subtitle' })[t['@type']] || null;
-const formatCodec = value => ({ AVC: 'h264', HEVC: 'hevc', AV1: 'av1', 'E-AC-3': 'eac3', 'AC-3': 'ac3', 'MLP FBA': 'truehd', AAC: 'aac', 'UTF-8': 'subrip' })[value] || value?.toLowerCase();
+const formatCodec = value => ({ AVC: 'h264', HEVC: 'hevc', AV1: 'av1', 'E-AC-3': 'eac3', 'AC-3': 'ac3', 'AC-4': 'ac4', 'MLP FBA': 'truehd', AAC: 'aac', 'UTF-8': 'subrip' })[value] || value?.toLowerCase();
 export function fromMediaInfo(result, structureTracks = []) {
   const tracks = structureTracks.map(t => ({ ...t, color: { ...t.color } })), evidence = [];
   const media = result.media?.track || [], general = media.find(t => t['@type'] === 'General') || {};

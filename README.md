@@ -243,6 +243,20 @@ Browser evidence checks distinguish codec signalling from sampled absence:
   of that audio track to be checked without gaps or unsupported syntax, including
   laced Matroska frames and MP4 sample tables/fragments. A non-JOC sample alone
   remains scoped. CRCs and JOC object payloads are not decoded.
+- AC-4 reads `ac4_dsi_v1` in MP4 `dac4` and Matroska `A_AC4` CodecPrivate
+  ([ETSI TS 103 190-2 V1.3.1, Annex E.6/E.10/E.11](https://www.etsi.org/deliver/etsi_ts/103100_103199/10319002/01.03.01_60/ts_10319002v010301p.pdf)).
+  The first presentation's active channel-group mask supplies its layout/count,
+  not the sample entry's channelcount or the sum of alternative presentations.
+  Height channels, immersive stereo (presentation version 2), the immersive-audio
+  indicator, and object-based substream groups are **signalled** evidence, not
+  decoded Atmos objects or proof of Apple playback. A negative requires every
+  presentation and AC-4 sample description to be fully parsed without immersive
+  or object signalling. Missing/truncated DSI, reserved syntax, unsupported
+  versions and unparsed extensions remain scoped/unsupported; Compare keeps
+  their Atmos score interval. Native Compare has no AC-4-specific score or Apple
+  compatibility penalty, so the browser retains the same codec-independent rules.
+  The real Dolby 5.1 test clip resolves to No Atmos; immersive/object/IMS paths
+  have syntax-only unit fixtures and are **unverified on real AC-4 media**.
 
 These deeper checks keep the same range-reader budget and automatic pause. Large
 untagged AVC MKVs may need **Continue deeper** to finish their video SEI and audio
