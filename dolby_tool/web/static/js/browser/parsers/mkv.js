@@ -1,5 +1,7 @@
 import { codec, track, transfer, primaries, matrix, decodeDovi, configurationEvidence } from '../codecs.js';
 import { VIDEO_FIELDS } from '../evidence.js';
+import { parseAvcConfig } from './avc.js';
+import { inspectHevcConfig } from './hevc.js';
 
 // IDs checked against matroska.org/technical/elements.html (2026-10-21).
 export const ID = Object.freeze({ Segment: 0x18538067, SeekHead: 0x114d9b74, Info: 0x1549a966, Tracks: 0x1654ae6b, Cues: 0x1c53bb6b, Cluster: 0x1f43b675 });
@@ -40,6 +42,7 @@ export async function elementHeader(reader, offset, end = reader.blob.size) {
 function parseTrack(b, node, evidence) {
   const list = children(b, node), id = get(b, list, 0xd7), type = get(b, list, 0x83);
   const t = track(id, type === 1 ? 'video' : type === 2 ? 'audio' : type === 17 ? 'subtitle' : 'other');
+  t.configurationIncomplete = !list.length || list.at(-1).end !== node.end;
   const rawCodec = get(b, list, 0x86, string) || '';
   t.codec = codec(rawCodec); t.codecId = rawCodec;
   t.language = get(b, list, 0x22b59d, string) || get(b, list, 0x22b59c, string) || 'eng';
@@ -63,9 +66,11 @@ function parseTrack(b, node, evidence) {
     let dv = false;
     for (const mapping of list.filter(x => x.id === 0x41e4)) {
       const m = children(b, mapping), kind = get(b, m, 0x41e7), data = m.find(x => x.id === 0x41ed);
-      if ([0x64766343, 0x64767643].includes(kind) && data) {
-        const config = decodeDovi(b.subarray(data.data, data.end));
+      if (!m.length || m.at(-1).end !== mapping.end) t.dvConfigIncomplete = true;
+      if ([0x64766343, 0x64767643, 0x64767743].includes(kind)) {
+        const config = data && decodeDovi(b.subarray(data.data, data.end));
         if (config) { dv = true; emit('video.dolby_vision', 'signaled', config, mapping, 'Dolby Vision block-addition mapping'); }
+        else { t.dvConfigIncomplete = true; emit('video.dolby_vision', 'unsupported', null, mapping, 'Damaged Dolby Vision block-addition mapping'); }
       }
     }
     if (!dv) emit('video.dolby_vision', 'not_found_in_scope', null, null, 'No Dolby Vision block-addition mapping');
@@ -75,7 +80,24 @@ function parseTrack(b, node, evidence) {
   if (privateData && t.codec === 'hevc' && privateData.end - privateData.data >= 22) {
     t.nalLengthSize = (b[privateData.data + 21] & 3) + 1;
     t.profile = (b[privateData.data + 1] & 31) === 2 ? 'Main 10' : 'Main';
+    const config = inspectHevcConfig(b.subarray(privateData.data, privateData.end));
+    t.dvConfigIncomplete ||= !config.complete;
+    t.packetConfigIncomplete = !config.complete;
+    if (config.dvRpu) emit('video.dolby_vision', 'observed', true, privateData, 'Dolby Vision RPU NAL observed in HEVC CodecPrivate');
+    for (const [field, key] of [['video.hdr10_plus', 'hdr10plus'], ['video.hdr10.mdcv', 'mdcvSei'], ['video.hdr10.cll', 'cllSei']]) if (config[key]) emit(field, 'observed', true, privateData, 'Metadata observed in HEVC CodecPrivate');
   }
+  if (privateData && t.codec === 'h264' && !list.some(x => x.id === 0x6d80)) {
+    const config = parseAvcConfig(b.subarray(privateData.data, privateData.end));
+    t.nalLengthSize = config.nalLengthSize;
+    t.packetConfigIncomplete = !config.complete;
+    const colors = config.colors.filter(c => transfer(c.transfer));
+    if (config.complete && colors.length === 1 && config.colors.length === 1) {
+      const c = colors[0];
+      t.color = { ...t.color, transfer: t.color.transfer || transfer(c.transfer), primaries: t.color.primaries || primaries(c.primaries), matrix: t.color.matrix || matrix(c.matrix) };
+      emit('video.transfer', 'observed', transfer(c.transfer), privateData, `AVC CodecPrivate SPS VUI explicitly specifies transfer_characteristics=${c.transfer} (${transfer(c.transfer)})`);
+    } else emit('video.transfer', 'not_found_in_scope', null, privateData, config.complete ? 'AVC CodecPrivate has unspecified, missing, unsupported or differing SPS transfer characteristics; SDR is not assumed' : 'Incomplete AVC CodecPrivate SPS VUI check');
+  }
+  if (privateData && t.codec === 'hevc' && privateData.end - privateData.data < 22) t.dvConfigIncomplete = t.packetConfigIncomplete = true;
   // Compression/encryption changes packet bytes; never scan encoded blocks as HEVC.
   if (list.some(x => x.id === 0x6d80)) {
     t.encoded = true;
@@ -98,6 +120,7 @@ export async function parseMkvStructure(reader, size) {
     if (h.end - h.data > reader.policy.maxMoovBytes) { result.damaged = true; return; }
     const b = await reader.read(h.data, h.end - h.data, 'mkv metadata');
     const list = [...elements(b)];
+    if (b.length && list.at(-1)?.end !== b.length) result.damaged = true;
     if (h.id === ID.SeekHead) for (const seek of list.filter(x => x.id === 0x4dbb)) {
       const entries = children(b, seek), target = get(b, entries, 0x53ab), pos = get(b, entries, 0x53ac);
       if ([ID.Info, ID.Tracks, ID.Cues, ID.SeekHead].includes(target) && pos !== null) pending.push({ off: segment.data + pos, id: target });
@@ -108,6 +131,7 @@ export async function parseMkvStructure(reader, size) {
     }
     if (h.id === ID.Tracks) for (const node of list.filter(x => x.id === 0xae)) {
       const entries = [], t = parseTrack(b, node, entries);
+      if (t.configurationIncomplete || t.id == null || result.tracks.some(other => other.id === t.id)) result.damaged = true;
       if (t.kind !== 'video' || !result.tracks.some(t => t.kind === 'video')) for (const entry of entries) {
         if (entry.ranges) entry.ranges = entry.ranges.map(([a, z]) => [a + h.data, z + h.data]);
         result.evidence.push(entry);
@@ -161,30 +185,77 @@ export async function resyncCluster(reader, offset, end) {
   }
   return null;
 }
-export async function* clusterBlocks(reader, cluster, structure) {
-  let time = 0;
+// RFC 9559 §16: all three lacing modes describe complete codec frames.
+// Batch only packet scans, not metadata discovery; every physical read still uses RangeReader.
+export async function* clusterBlocks(reader, cluster, structure, trackIds = [structure.primaryVideo?.id], batchBytes = 0) {
+  let time = 0, cached = null, cachedOffset = 0;
+  const packetReader = batchBytes ? {
+    blob: reader.blob,
+    async read(offset, length, purpose) {
+      if (length > batchBytes) return reader.read(offset, length, purpose);
+      if (!cached || offset < cachedOffset || offset + length > cachedOffset + cached.length) {
+        cachedOffset = offset;
+        cached = await reader.read(offset, Math.min(Math.max(length, batchBytes), cluster.end - offset), 'mkv packet batch');
+      } else await reader.gate.admit(0);
+      return cached.subarray(offset - cachedOffset, offset - cachedOffset + length);
+    },
+  } : reader;
+  const incomplete = id => {
+    if (id != null) (structure.incompleteTracks ??= new Set()).add(id);
+    else structure.scanIncomplete = true;
+  };
   for (let off = cluster.data; off < cluster.end;) {
-    const h = await elementHeader(reader, off, cluster.end);
-    if (!h) { structure.scanIncomplete = true; return; }
+    const h = await elementHeader(packetReader, off, cluster.end);
+    if (!h) { incomplete(); return; }
     if (h.id === ID.Cluster || [ID.Cues, ID.Info, ID.Tracks, ID.SeekHead].includes(h.id)) { cluster.nextOffset = h.start; return; }
-    if (h.id === 0xe7) time = uint(await reader.read(h.data, h.end - h.data, 'mkv cluster timestamp'));
+    if (h.id === 0xe7) time = uint(await packetReader.read(h.data, h.end - h.data, 'mkv cluster timestamp'));
     let block = h.id === 0xa3 ? h : null;
     if (h.id === 0xa0) {
       for (let p = h.data; p < h.end;) {
-        const child = await elementHeader(reader, p, h.end); if (!child) { structure.scanIncomplete = true; break; }
-        if (child.id === 0xa1) { block = child; break; } p = child.end;
+        const child = await elementHeader(packetReader, p, h.end); if (!child) { incomplete(); break; }
+        if (child.id === 0xa1) block = child;
+        // CodecState replaces CodecPrivate; unparsed changes forbid exhaustive negatives.
+        if (child.id === 0xa4) incomplete();
+        if (child.id === 0x75a1) incomplete(); // Unparsed BlockAdditions may carry HDR/DV data.
+        p = child.end;
       }
     }
     if (block) {
-      const header = await reader.read(block.data, Math.min(12, block.end - block.data), 'mkv block header');
+      const header = await packetReader.read(block.data, Math.min(12, block.end - block.data), 'mkv block header');
       const num = vint(header);
-      if (!num || header.length < num.width + 3) structure.scanIncomplete = true;
-      else if (num.value === structure.primaryVideo.id) {
-        const flags = header[num.width + 2];
-        if (flags & 6) structure.scanIncomplete = true;
+      if (!num || header.length < num.width + 3) incomplete();
+      else if (trackIds.includes(num.value) && block.end - block.data > reader.policy.maxReadBytes) incomplete(num.value);
+      else if (trackIds.includes(num.value)) {
+        const bytes = await packetReader.read(block.data, block.end - block.data, 'mkv block');
+        const flags = bytes[num.width + 2], relative = new DataView(bytes.buffer, bytes.byteOffset).getInt16(num.width);
+        let p = num.width + 3, sizes = [], lace = (flags >> 1) & 3;
+        if (!lace) sizes = [bytes.length - p];
         else {
-          const relative = new DataView(header.buffer, header.byteOffset).getInt16(num.width);
-          yield { offset: block.data + num.width + 3, size: block.end - block.data - num.width - 3, time: (time + relative) * structure.timestampScale / 1e9, key: block.start };
+          const count = bytes[p++] + 1;
+          if (lace === 2) {
+            const size = (bytes.length - p) / count;
+            if (Number.isInteger(size)) sizes = Array(count).fill(size);
+          } else {
+            for (let i = 0; i < count - 1 && p < bytes.length; i++) {
+              if (lace === 1) {
+                let size = 0, byte;
+                do { byte = bytes[p++]; size += byte; } while (byte === 255 && p < bytes.length);
+                if (byte === 255) break;
+                sizes.push(size);
+              } else {
+                const size = vint(bytes, p); if (!size || size.unknown) break;
+                p += size.width;
+                sizes.push(i ? sizes[i - 1] + size.value - (2 ** (7 * size.width - 1) - 1) : size.value);
+              }
+            }
+            if (sizes.length === count - 1) sizes.push(bytes.length - p - sizes.reduce((n, size) => n + size, 0));
+          }
+          if (sizes.length !== count) sizes = [];
+        }
+        if (!sizes.length || sizes.some(size => !Number.isSafeInteger(size) || size <= 0) || p + sizes.reduce((n, size) => n + size, 0) !== bytes.length) incomplete(num.value);
+        else for (const [index, size] of sizes.entries()) {
+          yield { offset: block.data + p, size, bytes: bytes.subarray(p, p + size), trackId: num.value, time: (time + relative) * structure.timestampScale / 1e9, key: `${block.start}:${index}` };
+          p += size;
         }
       }
     }
