@@ -31,12 +31,13 @@ test('session controls retain id, stop terminates, stale reports are ignored', (
   } finally { globalThis.Worker = original; }
 });
 
-test('completed workers are terminated on replacement; worker errors are terminal', () => {
+test('completed workers terminate immediately; worker errors are terminal', () => {
   const original = globalThis.Worker; globalThis.Worker = TestWorker;
   try {
     const session = startSession(new File(['test'], 'test.mp4'), { onReport() {} });
     const worker = TestWorker.instances.at(-1);
     worker.receive({ type: 'report', sessionId: session.id, report: { state: 'done' } });
+    assert.equal(worker.terminated, true);
     session.stop(); assert.equal(worker.terminated, true);
     const reports = [], failed = startSession(new File(['test'], 'test.mp4'), { onReport: r => reports.push(r) });
     const second = TestWorker.instances.at(-1);
