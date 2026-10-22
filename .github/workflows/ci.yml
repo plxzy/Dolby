@@ -16,11 +16,32 @@ jobs:
   test:
     name: Lint & test
     runs-on: ubuntu-latest
+    # The whole job normally takes under a minute; fail fast if a runner stalls.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      # Static GPL build (libx264/libx265/eac3) from GitHub releases, cached. apt-get
+      # occasionally stalled for 10-25 minutes on Ubuntu's mirrors.
+      - name: Cache ffmpeg
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/ffmpeg
+          key: ffmpeg-btbn-n8.1-gpl-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Download ffmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/ffmpeg
+          curl -fsSL --retry 3 --max-time 180 \
+            https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz \
+            | tar -xJ --strip-components=2 -C ~/ffmpeg --wildcards '*/bin/ffmpeg' '*/bin/ffprobe'
+
+      - name: Add ffmpeg to PATH
+        run: |
+          echo "$HOME/ffmpeg" >> "$GITHUB_PATH"
+          "$HOME/ffmpeg/ffmpeg" -hide_banner -encoders | grep -E 'libx264|libx265|eac3' >/dev/null
 
       - uses: astral-sh/setup-uv@v7
         with:
