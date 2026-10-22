@@ -30,6 +30,12 @@ VENDOR_MEMBERS = {
 }
 _INLINE_SCRIPT = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.DOTALL)
 _CHARSET_META = '<meta charset="utf-8">'
+# Static declarations only: dynamic import(), import.meta and Worker URLs stay lazy.
+_IMPORT = re.compile(
+    r"""^\s*(?:import\s*(?:[^;'"]*?\bfrom\s*)?|export\s+[^;'"]*?\bfrom\s*)['"]([^'"]+)['"]""",
+    re.MULTILINE,
+)
+_JS_LITERAL = re.compile(r"""//[^\n]*|/\*.*?\*/|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`""", re.DOTALL)
 
 
 def build_browser(out: Path, *, tarball: Path | None = None, integrity: str = MEDIAINFO_INTEGRITY) -> Path:
@@ -42,7 +48,29 @@ def build_browser(out: Path, *, tarball: Path | None = None, integrity: str = ME
     vendor.mkdir(parents=True)
     _extract_vendor(data, vendor)
 
-    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    # A whole-tree fingerprint keeps relative imports, worker URLs and lazy WASM in
+    # one generation. Hash before URL substitution to avoid a self-referential hash.
+    static = out / "static"
+    digest = hashlib.sha256(b"dolby-browser-assets-v1\0")
+    for path in sorted(static.rglob("*")):
+        if path.is_file():
+            digest.update(path.relative_to(static).as_posix().encode() + b"\0")
+            digest.update(hashlib.sha256(path.read_bytes()).digest())
+    generation = digest.hexdigest()
+    assets = out / generation
+    static.rename(assets)
+    static.mkdir()
+    assets.rename(static / generation)
+    assets = static / generation
+    prefix = f"/static/{generation}/"
+    for path in assets.rglob("*"):
+        if path.suffix in {".js", ".css"}:
+            source = path.read_text(encoding="utf-8")
+            path.write_text(source.replace("/static/", prefix), encoding="utf-8")
+
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8").replace("/static/", prefix)
+    preloads = "\n".join(f'  <link rel="modulepreload" href="{prefix}{path}">' for path in _startup_modules(assets))
+    html = html.replace("</head>", f"{preloads}\n</head>")
     csp = _csp(html)
     (out / "index.html").write_text(_browser_index(html, csp), encoding="utf-8")
     frame_ancestors = " ".join(EMBED_PARENTS)
@@ -51,10 +79,39 @@ def build_browser(out: Path, *, tarball: Path | None = None, integrity: str = ME
         f"  Content-Security-Policy: {csp}; frame-ancestors {frame_ancestors}\n"
         "  X-Content-Type-Options: nosniff\n"
         "  Referrer-Policy: no-referrer\n"
-        "  X-Robots-Tag: noindex, nofollow\n",
+        "  X-Robots-Tag: noindex, nofollow\n"
+        "/\n"
+        "  Cache-Control: public, max-age=0, must-revalidate\n"
+        "/index.html\n"
+        "  Cache-Control: public, max-age=0, must-revalidate\n"
+        "/static/*\n"
+        "  Cache-Control: public, max-age=31536000, immutable\n",
         encoding="utf-8",
     )
     return out
+
+
+def _startup_modules(assets: Path) -> list[str]:
+    """Follow local static import/re-export declarations, not runtime asset URLs."""
+    pending = [assets / "js" / "main.js"]
+    seen = set()
+    while pending:
+        path = pending.pop().resolve()
+        if path in seen:
+            continue
+        if not path.is_relative_to(assets.resolve()) or not path.is_file():
+            raise ToolError(f"startup import is missing or outside static assets: {path}")
+        seen.add(path)
+        source = path.read_text(encoding="utf-8")
+        # Preserve newlines so declaration anchoring survives block comments.
+        source = _JS_LITERAL.sub(
+            lambda m: "\n" * m[0].count("\n") if m[0].startswith(("//", "/*", "`")) else m[0], source
+        )
+        for specifier in _IMPORT.findall(source):
+            if not specifier.startswith(("./", "../")):
+                raise ToolError(f"startup import must be relative: {specifier} in {path}")
+            pending.append(path.parent / specifier)
+    return sorted(path.relative_to(assets.resolve()).as_posix() for path in seen)
 
 
 def sri_sha512(data: bytes) -> str:
