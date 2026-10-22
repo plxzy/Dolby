@@ -1,5 +1,7 @@
 import { codec, track, transfer, primaries, matrix, decodeDovi, configurationEvidence } from '../codecs.js';
 import { VIDEO_FIELDS } from '../evidence.js';
+import { parseAvcConfig } from './avc.js';
+import { inspectHevcConfig } from './hevc.js';
 
 const text = (b, p, n = 4) => String.fromCharCode(...b.subarray(p, p + n));
 const view = b => new DataView(b.buffer, b.byteOffset, b.byteLength);
@@ -78,7 +80,24 @@ function parseTrack(b, trak, evidence) {
     if (encrypted) continue;
     for (const c of configs) {
       const payload = b.subarray(c.data, c.end);
-      if (c.type === 'hvcC' && payload.length >= 22) { t.nalLengthSize = (payload[21] & 3) + 1; t.profile = (payload[1] & 31) === 2 ? 'Main 10' : 'Main'; }
+      if (c.type === 'hvcC' && payload.length >= 22) {
+        t.nalLengthSize = (payload[21] & 3) + 1; t.profile = (payload[1] & 31) === 2 ? 'Main 10' : 'Main';
+        const config = inspectHevcConfig(payload);
+        t.dvConfigIncomplete ||= !config.complete;
+        t.packetConfigIncomplete ||= !config.complete;
+        if (config.dvRpu) emit('video.dolby_vision', 'observed', true, c, 'Dolby Vision RPU NAL observed in hvcC');
+        for (const [field, key] of [['video.hdr10_plus', 'hdr10plus'], ['video.hdr10.mdcv', 'mdcvSei'], ['video.hdr10.cll', 'cllSei']]) if (config[key]) emit(field, 'observed', true, c, 'Metadata observed in hvcC');
+      }
+      if (c.type === 'avcC' && t.codec === 'h264') {
+        const config = parseAvcConfig(payload);
+        t.nalLengthSize = config.nalLengthSize;
+        t.packetConfigIncomplete ||= !config.complete;
+        if (config.complete && config.colors.length === 1 && transfer(config.colors[0].transfer)) {
+          const color = config.colors[0];
+          t.color = { transfer: transfer(color.transfer), primaries: primaries(color.primaries), matrix: matrix(color.matrix) };
+          emit('video.transfer', 'observed', t.color.transfer, c, `avcC SPS VUI explicitly specifies transfer_characteristics=${color.transfer} (${t.color.transfer})`);
+        } else emit('video.transfer', 'not_found_in_scope', null, c, config.complete ? 'avcC has unspecified, missing, unsupported or differing SPS transfer characteristics; SDR is not assumed' : 'Incomplete avcC SPS VUI check');
+      }
       if (['dvcC', 'dvvC', 'dvwC'].includes(c.type) && t.kind === 'video') {
         dvRecord = true;
         const config = decodeDovi(payload);
@@ -203,18 +222,20 @@ export async function parseMp4Structure(reader, size) {
   }
   if (damage) unsupported(damage);
   result.primaryVideo = result.tracks.find(t => t.kind === 'video' && !['jpeg', 'png '].includes(t.fourcc)) || null;
-  if (result.primaryVideo) {
+  result.audioSamples = new Map();
+  for (const t of [result.primaryVideo, ...result.tracks.filter(t => t.kind === 'audio' && t.codec === 'eac3')].filter(Boolean)) {
     try {
-      const table = sampleTable(result.primaryVideo);
+      const table = sampleTable(t);
       if (moofs.length) {
         const output = { offsets: Array.from(table.offsets), sizes: Array.from(table.sizes), complete: table.complete };
         for (const { off, length } of moofs) {
           if (length > reader.policy.maxMoovBytes) { output.complete = false; continue; }
-          fragmentSamples(await reader.read(off, length, 'mp4 fragment'), off, result.primaryVideo.id, defaults, output);
+          fragmentSamples(await reader.read(off, length, 'mp4 fragment'), off, t.id, defaults, output);
         }
         table.offsets = Float64Array.from(output.offsets); table.sizes = Uint32Array.from(output.sizes); table.complete = output.complete;
       }
-      result.samples = table;
+      if (t === result.primaryVideo) result.samples = table;
+      else result.audioSamples.set(t.id, table);
     } catch (error) { if (!(error instanceof RangeError)) throw error; unsupported('Damaged structure: truncated MP4 sample table'); }
   }
   for (const t of result.tracks) delete t.tables;
