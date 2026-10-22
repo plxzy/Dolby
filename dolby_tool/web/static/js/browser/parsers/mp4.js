@@ -40,6 +40,28 @@ export function hasAtmosMarker(payload) {
   bitOffset += 7;
   return readBits(payload, bitOffset, 1) === 1;
 }
+// Channels of the first (independent) substream, per ETSI TS 102 366 Annex F. The
+// sample entry's channelcount is fixed at 2 for AC-3/E-AC-3, so it is not the layout.
+const ACMOD_CHANNELS = [2, 1, 2, 3, 3, 4, 4, 5];
+// dec3 chan_loc, MSB first: Lc/Rc, Lrs/Rrs, Cs, Ts, Lsd/Rsd, Lw/Rw, Lvh/Rvh, Cvh, LFE2.
+const CHAN_LOC_CHANNELS = [2, 2, 1, 1, 2, 2, 2, 1, 1];
+export function dolbyChannels(type, payload) {
+  if (type === 'dac3') {
+    const acmod = readBits(payload, 10, 3), lfe = readBits(payload, 13, 1);
+    return acmod == null || lfe == null ? null : ACMOD_CHANNELS[acmod] + lfe;
+  }
+  const base = 13 + 3;
+  const acmod = readBits(payload, base + 12, 3), lfe = readBits(payload, base + 15, 1);
+  const dependents = readBits(payload, base + 19, 4);
+  if (acmod == null || lfe == null || dependents == null) return null;
+  let channels = ACMOD_CHANNELS[acmod] + lfe;
+  if (dependents > 0) {
+    const loc = readBits(payload, base + 23, 9);
+    if (loc == null) return null;
+    CHAN_LOC_CHANNELS.forEach((n, i) => { if (loc & (1 << (8 - i))) channels += n; });
+  }
+  return channels;
+}
 function parseTrack(b, trak, evidence) {
   const tkhd = child(b, trak, 'tkhd'), mdhd = path(b, trak, ['mdia', 'mdhd']), hdlr = path(b, trak, ['mdia', 'hdlr']);
   if (!tkhd || !mdhd || !hdlr) return null;
@@ -108,6 +130,10 @@ function parseTrack(b, trak, evidence) {
       }
       if (['mdcv', 'SmDm'].includes(c.type)) emit('video.hdr10.mdcv', 'signaled', true, c, 'Mastering display metadata in sample description');
       if (['clli', 'CoLL'].includes(c.type)) emit('video.hdr10.cll', 'signaled', true, c, 'Content light level metadata in sample description');
+      if (c.type === 'dac3' || c.type === 'dec3') {
+        const channels = dolbyChannels(c.type, payload);
+        if (channels && entryIndex === 0) t.channels = channels;
+      }
       if (c.type === 'dec3') {
         const joc = hasAtmosMarker(payload);
         emit(`audio.${id}.atmos`, joc ? 'signaled' : 'not_found_in_scope', joc || null, c, joc ? 'E-AC-3 configuration flags JOC' : "E-AC-3 configuration doesn't flag JOC");
