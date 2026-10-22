@@ -8,6 +8,7 @@ import { inspectHevcConfig } from '../../dolby_tool/web/static/js/browser/parser
 import { scoreReport } from '../../dolby_tool/web/static/js/browser/compare.js';
 import { toSpec } from '../../dolby_tool/web/static/js/browser/report.js';
 import { mkv, mp4, sample, hdr10plus, u32, u16, concat, el, uint, ebmlSize, avcConfig, eac3Frame } from './fixtures.mjs';
+import { hdrVerdict } from '../../dolby_tool/web/static/js/hdr.js';
 
 const policy = { autoBytes: Infinity, autoMs: Infinity, windowCount: 1, windowSamples: 1 };
 const run = file => analyze(file, { mediainfo: false, policy });
@@ -62,6 +63,10 @@ test('unspecified AVC transfer remains honest while complete SEI absence is conc
   assert.match(report.findings['video.transfer'].summary, /not proof of SDR/);
   assert.equal(report.findings['video.hdr10_plus'].state, 'absent');
   assert.equal(report.findings['video.hdr10.mdcv'].state, 'absent');
+  // The HDR card must not turn complete HDR-metadata absence into an SDR claim.
+  const card = hdrVerdict(toSpec(report).video, { mode: 'browser', transferName: String });
+  assert.equal(card.value, 'Unknown');
+  assert.equal(hdrVerdict(toSpec(await run(avcMkv())).video, { mode: 'browser', transferName: String }).value, 'SDR');
 });
 
 test('EAC3 whole-track BSI absence and late JOC signaling work in MKV and MP4', async () => {

@@ -13,6 +13,7 @@ import { $, el, replace } from '../dom.js';
 import { bindDropzone, bindFileDrop } from '../dragdrop.js';
 import * as fmt from '../format.js';
 import { MODE } from '../mode.js';
+import { hdrVerdict as hdrSummary } from '../hdr.js';
 
 // The compare score saturates at 80 Mbps (UHD Blu-ray territory), so the meter shares that scale.
 const BITRATE_SCALE_MBPS = 80;
@@ -494,25 +495,7 @@ function fourccVerdict(video) {
 }
 
 function hdrVerdict(video) {
-  const { mdcv, cll } = video.hdr10 ?? {};
-  const statics = [mdcv && 'MDCV', cll && 'CLL'].filter(Boolean).join(' + ');
-  const base = { label: 'HDR', iconName: 'hdr' };
-  if (video.hdr10_plus) {
-    return verdict({
-      ...base,
-      value: 'HDR10+',
-      detail: `Dynamic metadata${statics ? ` · ${statics}` : ''}`,
-      tone: 'success',
-    });
-  }
-  if (mdcv || cll) return verdict({ ...base, value: 'HDR10', detail: `Static metadata · ${statics}`, tone: 'success' });
-  if (video.color_transfer === 'smpte2084') {
-    return verdict({ ...base, value: 'PQ', detail: 'No static HDR10 metadata', tone: 'warn' });
-  }
-  if (video.color_transfer === 'arib-std-b67')
-    return verdict({ ...base, value: 'HLG', detail: 'Hybrid log-gamma', tone: 'success' });
-  const transfer = video.color_transfer ? fmt.transferName(video.color_transfer) : 'No HDR transfer signalled';
-  return verdict({ ...base, value: 'SDR', detail: transfer, tone: 'neutral' });
+  return verdict({ label: 'HDR', iconName: 'hdr', ...hdrSummary(video, { mode: MODE, transferName: fmt.transferName }) });
 }
 
 function atmosVerdict(tracks) {
