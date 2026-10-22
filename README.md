@@ -207,6 +207,11 @@ across releases become a requirement.
 Cloudflare's [static asset header rules](https://developers.cloudflare.com/workers/static-assets/headers/)
 honour these `_headers` overrides; the local Python preview does not apply them.
 
+Without JavaScript, the browser build shows a local-file privacy notice, explains
+that JavaScript is required, and links to the macOS app instead of exposing the
+native path form or dead navigation. This also applies to `?embed=1`; native
+`dolby-tool serve` keeps its existing page.
+
 Browser Compare accepts two or more files through the picker or drop zone, with no
 uploads or backend API calls. It uses the native comparison weights and scoring
 rules; the same editable weights are remembered locally. Unresolved evidence
@@ -214,6 +219,16 @@ contributes its possible minimum–maximum points, never an assumed zero. Rankin
 stays **Provisional** while any file is unfinished or any score is a range.
 Overlapping (including touching) ranges have no decided order; a best pick needs
 strictly separated ranges, or fully resolved scores (ties share best).
+
+A complete, undamaged MP4/MKV track table with no video track is a structural
+**No video** result, not an unsupported HDR/Dolby Vision scan. Audio evidence
+still runs; incomplete/damaged structure and partial MediaInfo track lists cannot
+prove video absence. Native `inspect_file()` rejects files without video and
+native Compare records an error rather than assigning a score. The browser
+therefore shows their audio evidence side by side but marks every component
+**Not scored** and excludes these files from ranking — it invents neither zero
+video points nor a native-equivalent audio-only score. Other unresolved evidence
+keeps its ranges as above.
 
 Only one comparison worker runs at a time, including during a pause, to bound
 memory and CPU. Each file keeps the inspector’s automatic 512 MiB / 30-second

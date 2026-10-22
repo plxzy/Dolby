@@ -115,6 +115,8 @@ export function createBrowserCompare({ ui, components, getWeights }) {
     const reports = queue.items.map(item => ({ ...emptyReport(item.file), ...item.report }));
     const specs = reports.map(toSpec), scores = specs.map((spec, i) => scoreSpec(spec, weights, { tracksComplete: reports[i].structureComplete === true }));
     const ranking = rankScores(scores, { scanning: queue.items.some(item => !item.report?.terminal) });
+    const unscored = scores.flatMap((score, i) => score ? [] : [i]);
+    const displayOrder = [...ranking.order, ...unscored];
     const cards = ranking.order.map(index => {
       const item = queue.items[index], score = scores[index], spec = specs[index];
       const winner = ranking.winners.includes(index), overlap = ranking.overlaps[index].length > 0;
@@ -149,14 +151,14 @@ export function createBrowserCompare({ ui, components, getWeights }) {
         (mdcv?.state === 'absent' && cll?.state === 'absent' ? { state: 'absent' } : mdcv));
     };
     const dimensionRows = [
-      ['Resolution', specs.map(s => s.video.resolution || 'Unknown')],
-      ['Frame rate', specs.map(s => fmt.fps(s.video.fps))],
-      ['Video codec', specs.map(s => fmt.codecName(s.video.codec))],
-      ['Video bitrate', specs.map(s => s.video.bit_rate_mbps == null ? 'Unknown' : `${fmt.num(s.video.bit_rate_mbps)} Mbps`), best(specs.map(s => s.video.bit_rate_mbps))],
-      ['FourCC', reports.map((r, i) => specs[i].video.fourcc || (r.structureComplete ? 'none' : 'Unknown')), flags('dv_fourcc_ok')],
-      ['Dolby Vision', reports.map((r, i) => specs[i].video.dolby_vision.profile ? `Profile ${specs[i].video.dolby_vision.profile}` : evidenceText(r.findings['video.dolby_vision'])), flags('dv_present')],
-      ['HDR10', reports.map(hdrText)],
-      ['HDR10+', reports.map(r => evidenceText(r.findings['video.hdr10_plus'])), flags('hdr10_plus')],
+      ['Resolution', specs.map(s => s.video.present === false ? 'No video' : s.video.resolution || 'Unknown')],
+      ['Frame rate', specs.map(s => s.video.present === false ? 'No video' : fmt.fps(s.video.fps))],
+      ['Video codec', specs.map(s => s.video.present === false ? 'No video' : fmt.codecName(s.video.codec))],
+      ['Video bitrate', specs.map(s => s.video.present === false ? 'No video' : s.video.bit_rate_mbps == null ? 'Unknown' : `${fmt.num(s.video.bit_rate_mbps)} Mbps`), best(specs.map(s => s.video.bit_rate_mbps))],
+      ['FourCC', reports.map((r, i) => specs[i].video.present === false ? 'No video' : specs[i].video.fourcc || (r.structureComplete ? 'none' : 'Unknown')), flags('dv_fourcc_ok')],
+      ['Dolby Vision', reports.map((r, i) => specs[i].video.present === false ? 'No video' : specs[i].video.dolby_vision.profile ? `Profile ${specs[i].video.dolby_vision.profile}` : evidenceText(r.findings['video.dolby_vision'])), flags('dv_present')],
+      ['HDR10', reports.map((r, i) => specs[i].video.present === false ? 'No video' : hdrText(r))],
+      ['HDR10+', reports.map((r, i) => specs[i].video.present === false ? 'No video' : evidenceText(r.findings['video.hdr10_plus'])), flags('hdr10_plus')],
       ['Audio codec', audio.map(t => fmt.codecName(t?.codec))],
       ['Channels', audio.map(t => fmt.channelsLabel(t?.channels)), best(audio.map(t => t?.channels))],
       ['Audio bitrate', audio.map(t => t?.bit_rate_kbps == null ? 'Unknown' : `${t.bit_rate_kbps} kbps`), best(audio.map(t => t?.bit_rate_kbps))],
@@ -167,15 +169,17 @@ export function createBrowserCompare({ ui, components, getWeights }) {
       ['Subtitles', reports.map((r, i) => r.structureComplete ? specs[i].subtitles.length : `${specs[i].subtitles.length}+ · checking`), best(reports.map((r, i) => r.structureComplete ? specs[i].subtitles.length : null))],
       ['Size', specs.map(s => fmt.bytes(s.container.size_bytes))],
       ['Duration', specs.map(s => fmt.duration(s.container.duration_s))],
-      ...components.map(c => [`${c.label} points`, scores.map(s => rangeText(s.components[c.key]))]),
+      ...components.map(c => [`${c.label} points`, scores.map(s => s ? rangeText(s.components[c.key]) : 'Not scored')]),
     ];
     replace(ui.output, el('div', { class: 'compare-results browser-compare-results' },
-      el('section', { class: 'ranking-section', 'aria-labelledby': 'ranking-title' },
+      unscored.map(i => notice({ tone: 'info', title: `No video track: ${queue.items[i].file.name}`, body: 'This file is not scored or ranked. Native Compare rejects files without a video stream; audio evidence is still shown below.' })),
+      ranking.order.length ? el('section', { class: 'ranking-section', 'aria-labelledby': 'ranking-title' },
         el('header', { class: 'section-header' }, el('h2', { id: 'ranking-title' }, 'Ranking'), ranking.provisional && badge('Provisional', { tone: 'warn' })),
         el('p', { class: 'compare-range-note' }, 'Scores are possible ranges, not estimates. Solid points are confirmed; stripes are unresolved. Overlapping ranges have no decided order. A best pick requires separated ranges, or fully resolved tied scores.'),
-        scoreLegend(components), el('ol', { class: 'ranking' }, cards)),
+        scoreLegend(components), el('ol', { class: 'ranking' }, cards)) :
+        emptyState({ iconName: 'video', title: 'No files with video to rank', body: 'Add a video file to compare release scores.' }),
       queue.items.flatMap(item => ['failed', 'file-unavailable'].includes(item.report?.terminal?.reason) ? [notice({ tone: 'danger', title: `Couldn’t finish ${item.file.name}`, body: item.report.terminal.message })] : []),
-      card({ title: 'Side by side', iconName: 'compare', className: 'dimensions-card', body: dataTable({ caption: 'Evidence and component score ranges; a check marks best in a conclusive row', className: 'dimension-table', columns: [{ label: 'Dimension', value: row => row[0] }, ...ranking.order.map(i => ({ label: queue.items[i].file.name, value: row => row[2]?.includes(i) ? el('span', { class: 'compare-dimension-winner' }, icon('check', { size: 14 }), row[1][i], el('span', { class: 'visually-hidden' }, ' (best)')) : row[1][i] }))], rows: dimensionRows }) }),
+      card({ title: 'Side by side', iconName: 'compare', className: 'dimensions-card', body: dataTable({ caption: 'Evidence and component score ranges; a check marks best in a conclusive row', className: 'dimension-table', columns: [{ label: 'Dimension', value: row => row[0] }, ...displayOrder.map(i => ({ label: queue.items[i].file.name, value: row => row[2]?.includes(i) ? el('span', { class: 'compare-dimension-winner' }, icon('check', { size: 14 }), row[1][i], el('span', { class: 'visually-hidden' }, ' (best)')) : row[1][i] }))], rows: dimensionRows }) }),
       drawer({ label: 'Evidence details', iconName: 'inspect', meta: 'Why a score may remain a range', content: () => el('div', { class: 'compare-evidence' }, reports.map((r, i) => el('section', {}, el('h3', {}, queue.items[i].file.name), ...Object.entries(r.findings).map(([id, finding]) => el('p', {}, `${id}: ${evidenceText(finding)}. ${finding.summary || ''} ${(finding.limitations || []).join(' ')}`))))) })));
     const nextDrawer = ui.output.querySelector('details');
     if (drawerOpen) nextDrawer.open = true;

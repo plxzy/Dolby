@@ -30,6 +30,21 @@ VENDOR_MEMBERS = {
 }
 _INLINE_SCRIPT = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.DOTALL)
 _CHARSET_META = '<meta charset="utf-8">'
+_MAIN_OPEN = '<main class="main" id="main" tabindex="-1">'
+_BROWSER_NOSCRIPT = """
+      <noscript>
+        <style>
+          .app { display: block; background: none; }
+          .app > .sidebar, .skip-link, .main > .view { display: none; }
+          .browser-nojs { max-width: 42rem; margin-inline: auto; }
+        </style>
+        <section class="browser-nojs view-heading" aria-labelledby="browser-nojs-title">
+          <h1 id="browser-nojs-title">Browser inspector needs JavaScript</h1>
+          <p>This inspector runs in your browser and needs JavaScript to inspect and compare files.</p>
+          <p>Files are read locally on your device and never uploaded.</p>
+          <p>Enable JavaScript, or <a href="https://github.com/plxzy/Dolby#run">get the macOS app</a>.</p>
+        </section>
+      </noscript>"""
 # Static declarations only: dynamic import(), import.meta and Worker URLs stay lazy.
 _IMPORT = re.compile(
     r"""^\s*(?:import\s*(?:[^;'"]*?\bfrom\s*)?|export\s+[^;'"]*?\bfrom\s*)['"]([^'"]+)['"]""",
@@ -178,6 +193,9 @@ def _csp(html: str) -> str:
 def _browser_index(html: str, csp: str) -> str:
     if html.count(_CHARSET_META) != 1:
         raise ToolError('index.html needs exactly one <meta charset="utf-8">')
+    if html.count(_MAIN_OPEN) != 1:
+        raise ToolError("index.html needs exactly one main content opening")
+    html = html.replace(_MAIN_OPEN, _MAIN_OPEN + _BROWSER_NOSCRIPT)
     inserted = (
         f"{_CHARSET_META}\n"
         '  <meta name="dolby-mode" content="browser">\n'
