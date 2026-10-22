@@ -51,8 +51,7 @@ export async function analyze(file, { policy = {}, onReport = () => {}, mediainf
         structure.tracks = parsed.tracks;
         structureComplete ||= parsed.tracks.length > 0;
         const primary = parsed.tracks.find(t => t.kind === 'video');
-        if (structure.primaryVideo && primary) Object.assign(structure.primaryVideo, primary);
-        else structure.primaryVideo = primary || null;
+        structure.primaryVideo = primary || structure.primaryVideo || null;
         add(parsed.evidence);
         for (const t of structure.tracks.filter(t => t.kind === 'audio')) store.field(`audio.${t.id}.atmos`);
       } catch (error) {

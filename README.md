@@ -206,6 +206,32 @@ leave permanent ranges; “not seen” does not mean “No”. The `?embed=1` ed
 on Inspect and provides an in-page Inspect / Compare switch. Its authenticated
 host pause/resume messages control both views, including queued comparisons.
 
+Browser evidence checks distinguish codec signalling from sampled absence:
+
+- MKV reads `dvcC` / `dvvC` / `dvwC` block-addition mappings and HEVC
+  `CodecPrivate` NAL arrays. With no positive configuration, a Dolby Vision
+  negative needs a valid **complete HEVC packet sweep**, not a few keyframes.
+  An RPU NAL is positive evidence even without a mapping. Unparsed block
+  additions, codec-state changes, malformed configuration or packets prevent
+  exhaustive negative conclusions.
+- AVC `avcC` / `CodecPrivate` and in-stream SPS VUI supply explicit colour
+  characteristics in MKV and MP4. BT.709 resolves SDR-transfer evidence;
+  missing/unspecified transfer is **not** guessed from resolution, bit depth or
+  encoder. AVC SEI metadata checks can finish even when transfer is unspecified.
+  AVC Dolby Vision RPU syntax (including profile 9) is not supported: a missing
+  MKV mapping remains scoped, even with SDR VUI.
+- E-AC-3 packets are walked frame-by-frame through BSI/addbsi extension type A,
+  the JOC signal also recognized by FFmpeg/MediaInfo. A positive is labelled
+  **signalled**, not decoded object audio. A negative requires every packet/frame
+  of that audio track to be checked without gaps or unsupported syntax, including
+  laced Matroska frames and MP4 sample tables/fragments. A non-JOC sample alone
+  remains scoped. CRCs and JOC object payloads are not decoded.
+
+These deeper checks keep the same range-reader budget and automatic pause. Large
+untagged AVC MKVs may need **Continue deeper** to finish their video SEI and audio
+BSI checks; partial work never removes the remaining Compare score interval.
+The evidence details state packet/frame counts and the exact checked scope.
+
 ## Notes
 
 - Binding to all interfaces (`--host 0.0.0.0` or `--host ::`) keeps browser origins restricted
