@@ -6,6 +6,9 @@
  * the transfer curve, so it is not evidence of SDR. Native mode keeps its SDR fallback.
  */
 export function hdrVerdict(video, { mode, transferName }) {
+  if (mode === 'browser' && video.present === false) {
+    return { value: 'No video', detail: 'Audio-only file', tone: 'neutral' };
+  }
   const { mdcv, cll } = video.hdr10 ?? {};
   const statics = [mdcv && 'MDCV', cll && 'CLL'].filter(Boolean).join(' + ');
   if (video.hdr10_plus) {

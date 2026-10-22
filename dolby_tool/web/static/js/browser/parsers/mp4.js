@@ -241,9 +241,9 @@ export async function parseMp4Structure(reader, size) {
   const result = { container: { format: 'mov,mp4,m4a,3gp,3g2,mj2', formatLongName: 'QuickTime / MOV', durationS: null, overallBitRateBps: null }, tracks: [], primaryVideo: null, evidence: [], kind: 'mp4' };
   const moofs = [], defaults = new Map();
   const unsupported = note => { for (const fieldId of [...VIDEO_FIELDS, ...result.tracks.filter(t => t.kind === 'audio').map(t => `audio.${t.id}.atmos`)]) result.evidence.push({ fieldId, kind: 'unsupported', value: null, source: 'MP4 structure', parser: 'mp4', note }); result.damaged = true; };
-  let damage = null;
-  for (let off = 0; off + 8 <= size;) {
-    const h = await reader.read(off, 16, 'mp4 headers');
+  let damage = null, off = 0;
+  for (; off + 8 <= size;) {
+    const h = await reader.read(off, Math.min(16, size - off), 'mp4 headers');
     let length = u32(h, 0), header = 8; const type = text(h, 4);
     if (length === 1) { if (h.length < 16) { damage = `Damaged structure: box '${type}' at ${off} exceeds the file`; break; } length = u64(h, 8); header = 16; }
     if (length === 0) length = size - off;
@@ -253,7 +253,9 @@ export async function parseMp4Structure(reader, size) {
       else {
         const b = await reader.read(off, length, 'mp4 moov'), root = [...boxes(b)][0];
         try {
-          for (const box of boxes(b, root.data, root.end)) if (box.type === 'trak') {
+          const children = [...boxes(b, root.data, root.end)];
+          if (children.at(-1)?.end !== root.end) unsupported('Damaged structure: incomplete MP4 movie box');
+          for (const box of children) if (box.type === 'trak') {
             const entries = [], t = parseTrack(b, box, entries);
             if (t) {
               const primary = t.kind === 'video' && !['jpeg', 'png '].includes(t.fourcc) && !result.tracks.some(t => t.kind === 'video' && !['jpeg', 'png '].includes(t.fourcc));
@@ -263,6 +265,7 @@ export async function parseMp4Structure(reader, size) {
               }
               result.tracks.push(t);
             }
+            else unsupported('Damaged structure: incomplete MP4 track identity');
           }
           const mvex = child(b, root, 'mvex');
           if (mvex) for (const trex of boxes(b, mvex.data, mvex.end)) if (trex.type === 'trex') defaults.set(u32(b, trex.data + 4), { size: u32(b, trex.data + 16) });
@@ -272,6 +275,7 @@ export async function parseMp4Structure(reader, size) {
     if (type === 'moof') moofs.push({ off, length });
     off += length;
   }
+  if (!damage && off !== size) damage = 'Damaged structure: incomplete MP4 box header';
   if (damage) unsupported(damage);
   result.primaryVideo = result.tracks.find(t => t.kind === 'video' && !['jpeg', 'png '].includes(t.fourcc)) || null;
   result.audioSamples = new Map();

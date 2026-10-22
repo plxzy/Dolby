@@ -43,7 +43,7 @@ export async function elementHeader(reader, offset, end = reader.blob.size) {
 function parseTrack(b, node, evidence) {
   const list = children(b, node), id = get(b, list, 0xd7), type = get(b, list, 0x83);
   const t = track(id, type === 1 ? 'video' : type === 2 ? 'audio' : type === 17 ? 'subtitle' : 'other');
-  t.configurationIncomplete = !list.length || list.at(-1).end !== node.end;
+  t.configurationIncomplete = !list.length || list.at(-1).end !== node.end || type == null;
   const rawCodec = get(b, list, 0x86, string) || '';
   t.codec = codec(rawCodec); t.codecId = rawCodec;
   t.language = get(b, list, 0x22b59d, string) || get(b, list, 0x22b59c, string) || 'eng';
