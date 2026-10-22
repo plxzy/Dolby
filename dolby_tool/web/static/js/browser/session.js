@@ -6,7 +6,11 @@ export function startSession(file, { onReport }) {
   const finish = (reason, message) => { if (stopped) return; stopped = true; worker.terminate(); last = { ...last, state: 'done', terminal: { reason, message }, activity: message }; onReport(last); };
   worker.addEventListener('message', ({ data }) => {
     if (stopped || data.sessionId !== id) return;
-    if (data.type === 'report') { last = data.report; onReport(last); }
+    if (data.type === 'report') {
+      last = data.report;
+      if (last.state === 'done') { stopped = true; worker.terminate(); }
+      onReport(last);
+    }
     else if (data.type === 'error') finish('failed', data.message);
   });
   worker.addEventListener('error', event => finish('failed', event.message || 'Analysis worker failed'));
