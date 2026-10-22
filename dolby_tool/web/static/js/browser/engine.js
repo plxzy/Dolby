@@ -14,7 +14,7 @@ export async function analyze(file, { policy = {}, onReport = () => {}, mediainf
   VIDEO_FIELDS.forEach(id => store.field(id));
   let structure = { kind: null, container: { format: null, formatLongName: null, durationS: null, overallBitRateBps: null }, tracks: [], primaryVideo: null, evidence: [] };
   let coverage = { video: { samplesInspected: 0, samplesTotal: null, windows: [], videoBytesInspected: 0, videoBytesTotal: null } };
-  let activity = 'Reading container structure', terminal = null, lastReport = null, lastPublished = -Infinity;
+  let activity = 'Reading container structure', terminal = null, lastReport = null, lastPublished = -Infinity, structureComplete = false;
   const unresolved = () => [...store.fields.keys()].filter(id => !positive(store.conclude(id)) && store.conclude(id).state !== 'absent');
   const next = text => { for (const id of store.fields.keys()) store.setNext(id, unresolved().includes(id) ? text : null); };
   const add = entries => { for (const { fieldId, ...entry } of entries) store.add(fieldId, entry); };
@@ -22,7 +22,7 @@ export async function analyze(file, { policy = {}, onReport = () => {}, mediainf
     if (!force && performance.now() - lastPublished < policy.reportIntervalMs) return;
     lastPublished = performance.now();
     const tracks = structure.tracks.map(({ id, kind, codec, fourcc, profile, width, height, fps, bitRateBps, channels, channelLayout, sampleRateHz, language, title, default: isDefault, forced, hearingImpaired, color }) => ({ id, kind, codec, fourcc, profile, width, height, fps, bitRateBps, channels, channelLayout, sampleRateHz, language, title, default: isDefault, forced, hearingImpaired, color: { ...color } }));
-    lastReport = { sessionId, file: { name: file.name || 'Video', size: file.size, lastModified: file.lastModified ?? null }, state: terminal ? 'done' : gate.state, terminal, activity, metrics: { ...reader.metrics, activeMs: gate.activeMs, limitBytes: gate.limitBytes, limitMs: gate.limitMs }, container: { ...structure.container }, tracks, findings: store.snapshot(), coverage: { video: { ...coverage.video, windows: [...coverage.video.windows] } } };
+    lastReport = { sessionId, file: { name: file.name || 'Video', size: file.size, lastModified: file.lastModified ?? null }, state: terminal ? 'done' : gate.state, terminal, activity, structureComplete, metrics: { ...reader.metrics, activeMs: gate.activeMs, limitBytes: gate.limitBytes, limitMs: gate.limitMs }, container: { ...structure.container }, tracks, findings: store.snapshot(), coverage: { video: { ...coverage.video, windows: [...coverage.video.windows] } } };
     onReport(lastReport);
   }
   const originalOnState = gate.onState;
@@ -36,6 +36,7 @@ export async function analyze(file, { policy = {}, onReport = () => {}, mediainf
     if (kind) {
       activity = 'Reading track configuration';
       structure = await (kind === 'mp4' ? parseMp4Structure : parseMkvStructure)(reader, file.size);
+      structureComplete = !structure.damaged && structure.tracks.length > 0;
       add(structure.evidence);
       for (const t of structure.tracks.filter(t => t.kind === 'audio')) store.field(`audio.${t.id}.atmos`);
       next(mediainfo ? 'Next: MediaInfo frame parse' : 'Next: sample more video packets');
@@ -48,6 +49,7 @@ export async function analyze(file, { policy = {}, onReport = () => {}, mediainf
         const parsed = fromMediaInfo(await runMediaInfo(mi, reader, file.size), structure.tracks);
         for (const [key, value] of Object.entries(parsed.container)) if (structure.container[key] == null) structure.container[key] = value;
         structure.tracks = parsed.tracks;
+        structureComplete ||= parsed.tracks.length > 0;
         const primary = parsed.tracks.find(t => t.kind === 'video');
         if (structure.primaryVideo && primary) Object.assign(structure.primaryVideo, primary);
         else structure.primaryVideo = primary || null;

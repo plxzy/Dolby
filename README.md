@@ -71,7 +71,7 @@ uv installs Python 3.14 and the locked dependencies on first run.
 | `dolby-tool hls-package-capture FILE OUT` | Package, serve, open QuickTime and capture logs in one go. |
 | `dolby-tool convert IN.mkv OUT.m4v` | Remux MKV → Apple-TV-ready `.m4v` (+ optional Apple TV metadata). |
 | `dolby-tool tag FILE_OR_DIR [--season-artwork IMAGE]` | Write Apple TV metadata or replace artwork in one file or every immediate `.mp4`/`.m4v` in a folder. |
-| `dolby-tool browser-build [--out DIR]` | Build the static browser inspector (Inspect only, files read on-device) into `dist/browser`. |
+| `dolby-tool browser-build [--out DIR]` | Build the static browser inspector (Inspect and Compare, files read on-device) into `dist/browser`. |
 
 `uv run dolby-tool …` and `uv run python -m dolby_tool …` work too.
 
@@ -180,13 +180,29 @@ depending on FFmpeg-version-specific defaults.
 
 ### Browser inspector
 
-`dolby-tool browser-build` writes a static site to `dist/browser`: the Inspect view
+`dolby-tool browser-build` writes a static site to `dist/browser`: Inspect and Compare
 in browser mode, an on-device analysis worker (`static/js/browser/`, tested with
 `node --test tests/js/`), vendored mediainfo.js (integrity-checked npm tarball,
 cached in `~/.cache/dolby-tool/`) and a `_headers` file with the CSP and
 `frame-ancestors` for psporidis.com. It is served by the assets-only Cloudflare
 Worker in `wrangler.jsonc` at https://dolby.psporidis.com; deploy manually with
 `uv run dolby-tool browser-build && npx wrangler deploy`.
+
+Browser Compare accepts two or more files through the picker or drop zone, with no
+uploads or backend API calls. It uses the native comparison weights and scoring
+rules; the same editable weights are remembered locally. Unresolved evidence
+contributes its possible minimum–maximum points, never an assumed zero. Ranking
+stays **Provisional** while any file is unfinished or any score is a range.
+Overlapping (including touching) ranges have no decided order; a best pick needs
+strictly separated ranges, or fully resolved scores (ties share best).
+
+Only one comparison worker runs at a time, including during a pause, to bound
+memory and CPU. Each file keeps the inspector’s automatic 512 MiB / 30-second
+pause and **Continue deeper** increments (2 GiB / 120 seconds). Continue or stop a
+paused file to advance the queue. Unsupported, stopped, or exhausted checks can
+leave permanent ranges; “not seen” does not mean “No”. The `?embed=1` edition starts
+on Inspect and provides an in-page Inspect / Compare switch. Its authenticated
+host pause/resume messages control both views, including queued comparisons.
 
 ## Notes
 

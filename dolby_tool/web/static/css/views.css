@@ -841,6 +841,96 @@
   }
 }
 
+/* Browser-only intervals: unknown points stay visible rather than becoming zero. */
+.compare-local-note,
+.compare-range-note {
+  padding: var(--space-3) var(--space-5);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.compare-session {
+  min-width: 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.compare-session-detail {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-4);
+}
+
+.compare-range-bar {
+  display: flex;
+  height: 14px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+
+.compare-range-component {
+  display: contents;
+}
+
+.compare-range-known {
+  flex: 0 0 var(--known);
+  background: var(--seg);
+}
+
+.compare-range-pending {
+  flex: 0 0 var(--pending);
+  background: repeating-linear-gradient(135deg, var(--seg) 0 3px, transparent 3px 7px);
+}
+
+.browser-compare-results {
+  animation: none;
+}
+
+.browser-compare-results .dimension-table {
+  min-width: 760px;
+  table-layout: fixed;
+}
+
+.browser-compare-results .dimension-table :is(th, td):first-child {
+  width: 150px;
+}
+
+.browser-compare-results .dimension-table thead th {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compare-dimension-winner {
+  color: var(--success-text);
+}
+
+.compare-evidence {
+  display: grid;
+  gap: var(--space-4);
+  overflow-wrap: anywhere;
+}
+
+.compare-evidence section {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.browser-compare-results .legend {
+  margin-bottom: var(--space-3);
+}
+
+.embed-switch {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-5);
+}
+
+.embed-switch [aria-current='page'] {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+
 @media (max-width: 560px) {
   .rank-card {
     grid-template-columns: minmax(0, 1fr);

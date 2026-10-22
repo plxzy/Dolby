@@ -11,6 +11,9 @@ import { dataTable } from '../components/table.js';
 import { $, el, replace } from '../dom.js';
 import { bindDropzone } from '../dragdrop.js';
 import * as fmt from '../format.js';
+import { WEIGHTS } from '../browser/compare.js';
+import { MODE } from '../mode.js';
+import { createBrowserCompare } from './browser-compare.js';
 
 const WEIGHTS_KEY = 'dolby-tool.compare-weights';
 const WEIGHT_MAX = 50;
@@ -20,14 +23,14 @@ const WEIGHT_MAX = 50;
  * never its rank; `standard` mirrors analysis.compare.WEIGHTS.
  */
 const COMPONENTS = [
-  { key: 'dv_present', label: 'Dolby Vision', standard: 25 },
-  { key: 'dv_fourcc_ok', label: 'DV FourCC', standard: 25 },
-  { key: 'hdr10_plus', label: 'HDR10+', standard: 10 },
-  { key: 'atmos', label: 'Atmos', standard: 15 },
-  { key: 'bit_rate_mbps', label: 'Video bitrate', standard: 20 },
-  { key: 'resolution', label: 'Resolution', standard: 10 },
-  { key: 'subtitles', label: 'Subtitles', standard: 5 },
-].map((component, index) => ({ ...component, color: `var(--series-${index + 1})` }));
+  { key: 'dv_present', label: 'Dolby Vision' },
+  { key: 'dv_fourcc_ok', label: 'DV FourCC' },
+  { key: 'hdr10_plus', label: 'HDR10+' },
+  { key: 'atmos', label: 'Atmos' },
+  { key: 'bit_rate_mbps', label: 'Video bitrate' },
+  { key: 'resolution', label: 'Resolution' },
+  { key: 'subtitles', label: 'Subtitles' },
+].map((component, index) => ({ ...component, standard: WEIGHTS[component.key], color: `var(--series-${index + 1})` }));
 
 const shownFourcc = (fourcc) => (fourcc && !fourcc.startsWith('[') ? fourcc : null);
 const mark = (value) => (value === true ? 'Yes' : value === false ? 'No' : 'Unknown');
@@ -76,6 +79,10 @@ let weights;
 let ranWith = null; // serialised weights behind the results on screen
 let requestId = 0;
 let ui;
+let browserView = null;
+
+export function pauseFromHost() { browserView?.pauseFromHost(); }
+export function resumeFromHost() { browserView?.resumeFromHost(); }
 
 export function init({ capabilities }) {
   weights = loadWeights();
@@ -91,6 +98,16 @@ export function init({ capabilities }) {
     weights: $('#weights-list'),
     max: $('#weights-max'),
   };
+  if (MODE === 'browser') {
+    browserView = createBrowserCompare({ ui, components: COMPONENTS, getWeights: () => weights });
+    $('#weights-reset').addEventListener('click', () => {
+      weights = standardWeights();
+      saveWeights();
+      renderWeights();
+    });
+    renderWeights();
+    return;
+  }
   ui.go.addEventListener('click', run);
   ui.clear.addEventListener('click', clearAll);
   ui.add.addEventListener('click', pickFiles);
@@ -286,6 +303,7 @@ function weightRow(component) {
 function updateGoButton() {
   const max = Object.values(weights).reduce((sum, value) => sum + value, 0);
   ui.max.textContent = fmt.num(max);
+  if (browserView) { browserView.refresh(); return; }
   const stale = ranWith != null && ranWith !== JSON.stringify(weights);
   ui.goLabel.textContent = stale ? 'Update scores' : 'Compare';
   ui.go.dataset.stale = String(stale);

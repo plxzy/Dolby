@@ -72,6 +72,9 @@ initTheme(document.getElementById('theme-form'));
 if (EMBED) {
   document.documentElement.dataset.embed = '';
   location.hash = '#/inspect';
+  document.getElementById('main').prepend(el('nav', { class: 'embed-switch', 'aria-label': 'Browser tools' },
+    el('a', { class: 'btn', href: '#/inspect', dataset: { nav: 'inspect' } }, 'Inspect'),
+    el('a', { class: 'btn', href: '#/compare', dataset: { nav: 'compare' } }, 'Compare')));
 }
 initRouter({ fallback: 'inspect', appName: 'dolby·tool' });
 guardStrayDrops();
@@ -79,9 +82,10 @@ guardStrayDrops();
 const capabilities = MODE === 'browser' ? Promise.resolve(null) : getJson('/api/capabilities').catch(() => null);
 if (MODE === 'browser') {
   inspect.init({ capabilities });
+  compare.init({ capabilities });
   document.querySelector('.sidebar-caption').textContent =
     'Runs in your browser — files are read on this device and never uploaded.';
-  for (const [name, title] of [['compare', 'Compare'], ['capture', 'TV Capture'], ['convert', 'Convert / Tag']]) {
+  for (const [name, title] of [['capture', 'TV Capture'], ['convert', 'Convert / Tag']]) {
     const section = document.querySelector(`[data-view="${name}"]`);
     const header = section.querySelector('.view-header');
     for (const child of [...section.children]) if (child !== header) child.remove();
