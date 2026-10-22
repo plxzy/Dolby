@@ -389,10 +389,12 @@ function verdictTiles(spec) {
     const hdr = strongestFinding(hdrFields);
     const atmos = strongestFinding(Object.entries(findings).filter(([id]) => /^audio\..+\.atmos$/.test(id)).map(([, f]) => f));
     return [
-      evidenceVerdict(findings['video.dolby_vision'], dolbyVisionVerdict(video),
-        { label: 'Dolby Vision', iconName: 'dolbyVision' }, spec.session.activity),
+      video.present === false ? dolbyVisionVerdict(video) :
+        evidenceVerdict(findings['video.dolby_vision'], dolbyVisionVerdict(video),
+          { label: 'Dolby Vision', iconName: 'dolbyVision' }, spec.session.activity),
       fourccVerdict(video),
-      evidenceVerdict(hdr, hdrVerdict(video), { label: 'HDR', iconName: 'hdr' }, spec.session.activity),
+      video.present === false ? hdrVerdict(video) :
+        evidenceVerdict(hdr, hdrVerdict(video), { label: 'HDR', iconName: 'hdr' }, spec.session.activity),
       !atmos && !audio.length && spec.session.terminal ? atmosVerdict(audio) :
         evidenceVerdict(atmos, atmosVerdict(audio), { label: 'Spatial audio', iconName: 'atmos' }, spec.session.activity),
       pictureVerdict(video),
@@ -458,6 +460,9 @@ function evidenceCard(spec) {
 }
 
 function dolbyVisionVerdict(video) {
+  if (video.present === false) {
+    return verdict({ label: 'Dolby Vision', iconName: 'dolbyVision', value: 'No video', detail: 'Audio-only file', tone: 'neutral' });
+  }
   const dv = video.dolby_vision;
   if (!dv?.present) {
     return verdict({
@@ -481,6 +486,7 @@ function dolbyVisionVerdict(video) {
 function fourccVerdict(video) {
   const fourcc = video.fourcc && !video.fourcc.startsWith('[') ? video.fourcc : null;
   const base = { label: 'Sample entry', iconName: 'tag' };
+  if (video.present === false) return verdict({ ...base, value: 'No video', detail: 'Audio-only file', tone: 'neutral' });
   if (!fourcc) return verdict({ ...base, value: 'None', detail: 'This container has no FourCC', tone: 'neutral' });
   if (video.dolby_vision?.present) {
     return DV_FOURCCS.has(fourcc)
@@ -523,6 +529,9 @@ function atmosVerdict(tracks) {
 }
 
 function pictureVerdict(video) {
+  if (video.present === false) {
+    return verdict({ label: 'Picture', iconName: 'resolution', value: 'No video', detail: 'Audio-only file', tone: 'neutral' });
+  }
   return verdict({
     label: 'Picture',
     iconName: 'resolution',
@@ -539,6 +548,9 @@ function audioSummary(track) {
 // Cards
 
 function videoCard(video) {
+  if (video.present === false) {
+    return card({ title: 'Video', iconName: 'video', className: 'span-video', body: el('p', {}, 'No video track · Audio-only file') });
+  }
   const fourcc = video.fourcc && !video.fourcc.startsWith('[') ? video.fourcc : null;
   return card({
     title: 'Video',

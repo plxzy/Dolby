@@ -77,6 +77,22 @@ test('engine track completeness and completed packet evidence narrow a real repo
   assert.deepEqual(scoreReport(report).components.hdr10_plus, { min: 10, max: 10 });
 });
 
+test('confirmed no-video files have no native score and cannot win or affect ranks', async () => {
+  const report = await analyze(mp4({ video: false, audio: [{ code: 'mp4a' }] }), { mediainfo: false });
+  assert.equal(report.videoPresent, false);
+  assert.equal(scoreReport(report), null);
+  const ranked = rankScores([null, s(20), null, s(10)]);
+  assert.deepEqual(ranked.order, [1, 3]);
+  assert.deepEqual(ranked.ranks, [null, 1, null, 2]);
+  assert.deepEqual(ranked.winners, [1]);
+  assert.deepEqual(ranked.overlaps, [[], [], [], []]);
+  assert.equal(ranked.provisional, false);
+  assert.deepEqual(rankScores([null, null]).winners, []);
+  assert.deepEqual(rankScores([null, null]).order, []);
+  assert.deepEqual(rankScores([null, s(20, 50), s(40, 60)]).winners, []);
+  assert.equal(rankScores([null, s(20)], { scanning: true }).provisional, true);
+});
+
 function fakeQueue() {
   const sessions = [], changes = [];
   const queue = new CompareSessions({ onChange: item => changes.push(item), start(file, { onReport }) {

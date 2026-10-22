@@ -25,9 +25,10 @@ function sumPoints(values) {
   return sum + correction;
 }
 
-/** Null is unknown, including after a stopped, incomplete, or unsupported scan. */
+/** Null evidence stays an interval; a confirmed no-video file has no native score. */
 export function scoreSpec(spec, weights = WEIGHTS, { tracksComplete = false } = {}) {
   const w = { ...WEIGHTS, ...weights }, v = spec.video;
+  if (v.present === false) return null;
   const dv = v.dolby_vision.present;
   const fourcc = v.fourcc ? DV_FOURCCS.has(v.fourcc) : tracksComplete ? false : null;
   const atmos = spec.audio.some(t => t.atmos === true) ? true :
@@ -50,15 +51,16 @@ export function scoreReport(report, weights = WEIGHTS) {
   return scoreSpec(toSpec(report), weights, { tracksComplete: report.structureComplete === true });
 }
 
-/** Strict separation wins. Touching endpoints overlap; exact resolved ties share best. */
+/** Null scores are unranked. Strict separation wins; exact resolved ties share best. */
 export function rankScores(scores, { scanning = false } = {}) {
-  const allResolved = scores.every(s => s.resolved);
-  const best = Math.max(...scores.map(s => s.min));
+  const eligible = scores.filter(Boolean);
+  const allResolved = eligible.every(s => s.resolved);
+  const best = Math.max(...eligible.map(s => s.min));
   const winners = scores.flatMap((score, index) =>
-    (allResolved ? score.min === best : scores.every((other, j) => j === index || score.min > other.max)) ? [index] : []);
-  const order = scores.map((_, i) => i).sort((a, b) => scores[b].min - scores[a].min || scores[b].max - scores[a].max || a - b);
-  const ranks = scores.map(score => 1 + scores.filter(other => other.min > score.max).length);
+    score && (allResolved ? score.min === best : scores.every((other, j) => !other || j === index || score.min > other.max)) ? [index] : []);
+  const order = scores.flatMap((score, i) => score ? [i] : []).sort((a, b) => scores[b].min - scores[a].min || scores[b].max - scores[a].max || a - b);
+  const ranks = scores.map(score => score ? 1 + eligible.filter(other => other.min > score.max).length : null);
   const overlaps = scores.map((score, i) => scores.flatMap((other, j) =>
-    j !== i && score.min <= other.max && other.min <= score.max ? [j] : []));
+    score && other && j !== i && score.min <= other.max && other.min <= score.max ? [j] : []));
   return { order, ranks, overlaps, winners, provisional: scanning || !allResolved };
 }

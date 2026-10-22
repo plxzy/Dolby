@@ -15,6 +15,8 @@ export async function analyze(file, { policy = {}, onReport = () => {}, mediainf
   let structure = { kind: null, container: { format: null, formatLongName: null, durationS: null, overallBitRateBps: null }, tracks: [], primaryVideo: null, evidence: [] };
   let coverage = { video: { samplesInspected: 0, samplesTotal: null, windows: [], videoBytesInspected: 0, videoBytesTotal: null } };
   let activity = 'Reading container structure', terminal = null, lastReport = null, lastPublished = -Infinity, structureComplete = false;
+  // Only the complete structural parser can prove no video; MediaInfo may return partial tracks.
+  let videoPresent = null;
   const unresolved = () => [...store.fields.keys()].filter(id => !positive(store.conclude(id)) && store.conclude(id).state !== 'absent');
   const next = text => { for (const id of store.fields.keys()) store.setNext(id, unresolved().includes(id) ? text : null); };
   const add = entries => { for (const { fieldId, ...entry } of entries) store.add(fieldId, entry); };
@@ -22,7 +24,7 @@ export async function analyze(file, { policy = {}, onReport = () => {}, mediainf
     if (!force && performance.now() - lastPublished < policy.reportIntervalMs) return;
     lastPublished = performance.now();
     const tracks = structure.tracks.map(({ id, kind, codec, fourcc, profile, width, height, fps, bitRateBps, channels, channelLayout, sampleRateHz, language, title, default: isDefault, forced, hearingImpaired, color }) => ({ id, kind, codec, fourcc, profile, width, height, fps, bitRateBps, channels, channelLayout, sampleRateHz, language, title, default: isDefault, forced, hearingImpaired, color: { ...color } }));
-    lastReport = { sessionId, file: { name: file.name || 'Video', size: file.size, lastModified: file.lastModified ?? null }, state: terminal ? 'done' : gate.state, terminal, activity, structureComplete, metrics: { ...reader.metrics, activeMs: gate.activeMs, limitBytes: gate.limitBytes, limitMs: gate.limitMs }, container: { ...structure.container }, tracks, findings: store.snapshot(), coverage: { video: { ...coverage.video, windows: [...coverage.video.windows] } } };
+    lastReport = { sessionId, file: { name: file.name || 'Video', size: file.size, lastModified: file.lastModified ?? null }, state: terminal ? 'done' : gate.state, terminal, activity, structureComplete, videoPresent, metrics: { ...reader.metrics, activeMs: gate.activeMs, limitBytes: gate.limitBytes, limitMs: gate.limitMs }, container: { ...structure.container }, tracks, findings: store.snapshot(), coverage: { video: { ...coverage.video, windows: [...coverage.video.windows] } } };
     onReport(lastReport);
   }
   const originalOnState = gate.onState;
@@ -37,6 +39,8 @@ export async function analyze(file, { policy = {}, onReport = () => {}, mediainf
       activity = 'Reading track configuration';
       structure = await (kind === 'mp4' ? parseMp4Structure : parseMkvStructure)(reader, file.size);
       structureComplete = !structure.damaged && structure.tracks.length > 0;
+      if (structure.primaryVideo) videoPresent = true;
+      else if (structureComplete && !structure.unknownClusters) videoPresent = false;
       add(structure.evidence);
       for (const t of structure.tracks.filter(t => t.kind === 'audio')) store.field(`audio.${t.id}.atmos`);
       next(mediainfo ? 'Next: MediaInfo frame parse' : 'Next: sample more video packets');
@@ -52,6 +56,7 @@ export async function analyze(file, { policy = {}, onReport = () => {}, mediainf
         structureComplete ||= parsed.tracks.length > 0;
         const primary = parsed.tracks.find(t => t.kind === 'video');
         structure.primaryVideo = primary || structure.primaryVideo || null;
+        if (primary) videoPresent = true;
         add(parsed.evidence);
         for (const t of structure.tracks.filter(t => t.kind === 'audio')) store.field(`audio.${t.id}.atmos`);
       } catch (error) {
@@ -59,6 +64,9 @@ export async function analyze(file, { policy = {}, onReport = () => {}, mediainf
         for (const id of unresolved()) store.limit(id, `MediaInfo unavailable: ${error.message}`);
       }
       next('Next: sample more video packets'); publish();
+    }
+    if (videoPresent === false) {
+      for (const id of VIDEO_FIELDS) store.add(id, { kind: 'absent', value: false, source: 'Container track table', parser: structure.kind, note: 'No video track in the complete container structure' });
     }
     if (!kind) {
       for (const id of VIDEO_FIELDS) if (!positive(store.conclude(id)) && store.conclude(id).state !== 'absent') store.add(id, { kind: 'unsupported', value: null, source: 'Browser packet scan', parser: 'scan', note: 'Packet scan supports MP4/MOV and MKV' });

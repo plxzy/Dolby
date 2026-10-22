@@ -61,6 +61,27 @@ def test_build_writes_a_browser_mode_page_with_a_matching_script_hash(tmp_path, 
         assert f"{route}\n  Cache-Control: public, max-age=0, must-revalidate" in headers
 
 
+def test_browser_nojs_notice_hides_the_native_shell_without_changing_native_html(tmp_path, tarball):
+    source = browser_build.STATIC_DIR / "index.html"
+    native_html = source.read_text()
+    out = build_browser(tmp_path / "out", tarball=tarball, integrity=sri_sha512(tarball.read_bytes()))
+    html = (out / "index.html").read_text()
+    notice = re.search(r"<noscript>(.*?)</noscript>", html, re.DOTALL).group(1)
+    assert "Browser inspector needs JavaScript" in notice
+    assert "runs in your browser" in notice
+    assert "Files are read locally on your device and never uploaded" in notice
+    assert '<a href="https://github.com/plxzy/Dolby#run">' in notice
+    assert ".app > .sidebar, .skip-link, .main > .view { display: none; }" in notice
+    assert ".app { display: block; background: none; }" in notice
+    assert html.index("<noscript>") > html.index('<main class="main"')
+    assert len(browser_build._INLINE_SCRIPT.findall(html)) == 1
+    assert "style-src 'self' 'unsafe-inline'" in (out / "_headers").read_text()
+    # The fallback is unconditional without JS, including ?embed=1; native serve is untouched.
+    assert source.read_text() == native_html
+    assert "<noscript>" not in native_html
+    assert "Drag a file from Finder, or paste its absolute path." in native_html
+
+
 def test_startup_preloads_cover_the_import_graph_without_lazy_analysis(tmp_path, tarball):
     out = build_browser(tmp_path / "out", tarball=tarball, integrity=sri_sha512(tarball.read_bytes()))
     html = (out / "index.html").read_text()
