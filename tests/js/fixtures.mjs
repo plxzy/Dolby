@@ -37,7 +37,7 @@ export function mp4({ dv = false, fourcc = 'hvc1', samples = [], tailBytes = 0, 
       const header = Buffer.alloc(28); header.writeUInt16BE(6, 16); header.writeUInt32BE(48000 * 65536, 24);
       const packets = a.samples || [], start = cursor;
       cursor += packets.reduce((n, s) => n + s.length, 0);
-      return trak(i + 2, 'audio', box(a.code, header, ...(a.code === 'ec-3' ? [box('dec3', dec3(a.joc))] : [])), packets.map(s => s.length), start);
+      return trak(i + 2, 'audio', box(a.code, header, ...(a.code === 'ec-3' ? [box('dec3', dec3(a.joc))] : []), ...(a.dsi ? [box('dac4', a.dsi)] : [])), packets.map(s => s.length), start);
     });
     return box('moov', trak(1, 'video', entry, samples.map(s => s.length), offset), ...audioTracks);
   }
@@ -63,7 +63,7 @@ export function mkv({ dv = true, clusters = [sample({ size: 80 }), sample({ size
   const privateData = codecPrivate || Buffer.alloc(23);
   if (!codecPrivate) { privateData[0] = 1; privateData[1] = 2; privateData[21] = 3; }
   const video = el(0xae, uint(0xd7, 1), uint(0x83, 1), el(0x86, Buffer.from(videoCodec)), el(0x63a2, privateData), uint(0x23e383, 41666667), el(0xe0, uint(0xb0, 1920), uint(0xba, 1080), el(0x55b0, ...(colorTransfer == null ? [] : [uint(0x55ba, colorTransfer)]), ...(staticHdr ? [el(0x55d0, el(0x55d1, float64(0.68))), uint(0x55bc, 1000)] : []))), ...(dv ? [el(0x41e4, uint(0x41e7, 0x64766343), el(0x41ed, dvcC()))] : []));
-  const audioTracks = audio.map((a, i) => el(0xae, uint(0xd7, i + 2), uint(0x83, 2), el(0x86, Buffer.from('A_EAC3')), el(0xe1, uint(0x9f, 6), el(0xb5, float64(48000)))));
+  const audioTracks = audio.map((a, i) => el(0xae, uint(0xd7, i + 2), uint(0x83, 2), el(0x86, Buffer.from(a.code || 'A_EAC3')), ...(a.dsi ? [el(0x63a2, a.dsi)] : []), ...(a.encoded ? [el(0x6d80)] : []), el(0xe1, uint(0x9f, 6), el(0xb5, float64(48000)))));
   const count = Math.max(clusters.length, ...audio.map(a => a.samples.length));
   const body = el(0x18538067, el(0x1549a966, uint(0x2ad7b1, 1000000), el(0x4489, float64(count * 1000))), el(0x1654ae6b, video, ...audioTracks), ...Array.from({ length: count }, (_, i) => el(0x1f43b675, uint(0xe7, i * 1000), ...(clusters[i] ? [el(0xa3, [0x81, 0, 0, laced ? 0x82 : 0x80], clusters[i])] : []), ...audio.flatMap((a, j) => a.samples[i] ? [el(0xa3, [0x82 + j, 0, 0, 0x80], a.samples[i])] : []))));
   return new File([el(0x1a45dfa3), body], 'fixture.mkv');

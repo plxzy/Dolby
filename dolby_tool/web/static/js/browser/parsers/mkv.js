@@ -2,6 +2,7 @@ import { codec, track, transfer, primaries, matrix, decodeDovi, configurationEvi
 import { VIDEO_FIELDS } from '../evidence.js';
 import { parseAvcConfig } from './avc.js';
 import { inspectHevcConfig } from './hevc.js';
+import { parseAc4Dsi } from './ac4.js';
 
 // IDs checked against matroska.org/technical/elements.html (2026-10-21).
 export const ID = Object.freeze({ Segment: 0x18538067, SeekHead: 0x114d9b74, Info: 0x1549a966, Tracks: 0x1654ae6b, Cues: 0x1c53bb6b, Cluster: 0x1f43b675 });
@@ -77,6 +78,12 @@ function parseTrack(b, node, evidence) {
   }
   if (audio) { const a = children(b, audio); t.channels = get(b, a, 0x9f) ?? 1; t.sampleRateHz = get(b, a, 0xb5, float) ?? 8000; }
   const privateData = list.find(x => x.id === 0x63a2);
+  if (t.codec === 'ac4' && !list.some(x => x.id === 0x6d80)) {
+    const dsi = parseAc4Dsi(privateData ? b.subarray(privateData.data, privateData.end) : new Uint8Array());
+    t.channels = dsi.channels; t.channelLayout = dsi.channelLayout;
+    t.sampleRateHz = dsi.sampleRateHz ?? t.sampleRateHz; t.bitRateBps = dsi.bitRateBps;
+    emit(`audio.${id}.atmos`, dsi.kind, dsi.value, privateData, dsi.note);
+  }
   if (privateData && t.codec === 'hevc' && privateData.end - privateData.data >= 22) {
     t.nalLengthSize = (b[privateData.data + 21] & 3) + 1;
     t.profile = (b[privateData.data + 1] & 31) === 2 ? 'Main 10' : 'Main';
