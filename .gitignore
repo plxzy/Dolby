@@ -18,3 +18,4 @@ harness/.swiftpm/
 
 # Static browser build output
 dist/
+.wrangler/

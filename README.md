@@ -185,7 +185,9 @@ in browser mode, an on-device analysis worker (`static/js/browser/`, tested with
 `node --test tests/js/`), vendored mediainfo.js (integrity-checked npm tarball,
 cached in `~/.cache/dolby-tool/`) and a `_headers` file with the CSP and
 `frame-ancestors` for psporidis.com. It is served by the assets-only Cloudflare
-Worker in `wrangler.jsonc` at https://dolby.psporidis.com; deploy manually with
+Worker in `wrangler.jsonc` at https://dolby.psporidis.com. Cloudflare Workers Builds
+redeploys it on every push to `main` (build `pip install uv && uv run dolby-tool
+browser-build --out dist/browser`, deploy `npx wrangler deploy`); to deploy by hand, run
 `uv run dolby-tool browser-build && npx wrangler deploy`.
 
 Browser Compare accepts two or more files through the picker or drop zone, with no
