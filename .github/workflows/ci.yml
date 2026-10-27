@@ -25,7 +25,7 @@ jobs:
       # occasionally stalled for 10-25 minutes on Ubuntu's mirrors.
       - name: Cache ffmpeg
         id: ffmpeg-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/ffmpeg
           key: ffmpeg-btbn-n8.1-gpl-${{ runner.os }}-${{ runner.arch }}
