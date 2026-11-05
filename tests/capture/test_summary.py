@@ -103,7 +103,7 @@ def test_tv_capture_keeps_current_best_and_observed_audio():
             "spatialization": None,
             "spatialization_eligible": None,
             "decodable": True,
-            "is_atmos": False,
+            "is_atmos": None,
             "count": 1,
         },
         {
@@ -191,7 +191,7 @@ def test_audio_format_keeps_spatialization_fields_without_inventing_atmos():
     assert playback["observed_audio"][0]["spatialization_eligible"] == "yes"
     assert playback["observed_audio"][0]["spatialization"] == "yes"
     assert playback["observed_audio"][0]["sample_rate"] == 48000
-    assert playback["observed_audio"][0]["is_atmos"] is True
+    assert playback["observed_audio"][0]["is_atmos"] is None  # spatialized, but no decoder verdict
     assert playback["observed_audio"][1]["format"] == "qc+3"
     assert playback["observed_audio"][1]["spatialization_eligible"] == "yes"
     assert playback["observed_audio"][1]["spatialization"] == "no"
@@ -629,3 +629,62 @@ def test_tvapp_sample_log_is_sanitised():
 
     assert "/Users/" not in text
     assert "@" not in text
+
+
+DECODER_NOT_ATMOS = "ACDDPAtmosDecoder.cpp:268 mIsAtmos = 0, mIsTVOS = 0, mIsOARMode = 0"
+DECODER_ATMOS = "ACDDPAtmosDecoder.cpp:268 mIsAtmos = 1, mIsTVOS = 0, mIsOARMode = 1"
+EC3_SPATIALIZED_5_1 = (
+    "<<<< FigStreamPlayer >>>> fpfs_ReportAudioPlaybackThroughFigLog: [AudioFormat ec-3 is  decodable] "
+    "[AudioChannels 6] [Spatialization Eligible yes] [Client permits multi: yes, stereo: no] "
+    "[Spatialization yes] [StereoSpatialization no] [Rendition Multichannel] [SampleRate 48000] "
+    "[BitDepth 0] [Immersive rendering no]"
+)
+MIXER_SPATIALIZABLE = (
+    "MEMixerChannel.cpp:3611 mFormatID='ec-3', mNumChannels=6, mBestAvailableContentType=1, "
+    "mContentspatializable=1, mSpatializationStatus=2, err=0"
+)
+
+
+def test_spatialized_ec3_5_1_with_decoder_off_is_not_atmos():
+    """Issue #42: spatialization of ordinary DD+ 5.1 must not be reported as Atmos."""
+    playback = summarize_log_lines([DECODER_NOT_ATMOS, MIXER_SPATIALIZABLE, EC3_SPATIALIZED_5_1])["playback"]
+
+    assert playback["audio"]["spatialization"] == "yes"
+    for key in ("audio", "best_audio"):
+        assert playback[key]["is_atmos"] is False
+    assert playback["observed_audio"][0]["is_atmos"] is False
+    assert playback["renderer_evidence"]["atmos_decoder_active"] is False
+    assert playback["renderer_evidence"]["mixer_content_spatializable"] is True
+
+
+def test_spatialized_ec3_without_decoder_evidence_stays_unconfirmed():
+    playback = summarize_log_lines([MIXER_SPATIALIZABLE, EC3_SPATIALIZED_5_1])["playback"]
+    assert playback["audio"]["is_atmos"] is None
+
+
+def test_ec3_with_atmos_decoder_evidence_is_atmos():
+    playback = summarize_log_lines([DECODER_ATMOS, EC3_SPATIALIZED_5_1])["playback"]
+    assert playback["audio"]["is_atmos"] is True
+    assert playback["best_audio"]["is_atmos"] is True
+    assert playback["observed_audio"][0]["is_atmos"] is True
+
+
+def test_decoder_line_after_the_audio_report_applies_to_it():
+    playback = summarize_log_lines([EC3_SPATIALIZED_5_1, DECODER_NOT_ATMOS])["playback"]
+    assert playback["audio"]["is_atmos"] is False
+    assert playback["observed_audio"][0]["is_atmos"] is False
+
+
+def test_later_decoder_state_does_not_rewrite_earlier_audio_report():
+    atmos_16ch = "[AudioFormat ec+3] [AudioChannels 16] [Spatialization yes]"
+    playback = summarize_log_lines([DECODER_ATMOS, atmos_16ch, DECODER_NOT_ATMOS, EC3_SPATIALIZED_5_1])["playback"]
+
+    first, second = playback["observed_audio"]
+    assert (first["format"], first["is_atmos"]) == ("ec+3", True)
+    assert (second["format"], second["is_atmos"]) == ("ec-3", False)
+    assert playback["best_audio"]["is_atmos"] is True
+
+
+def test_qc3_without_decoder_evidence_is_not_atmos():
+    playback = summarize_log_lines(["[AudioFormat qc+3] [AudioChannels 16] [Spatialization yes]"])["playback"]
+    assert playback["audio"]["is_atmos"] is False

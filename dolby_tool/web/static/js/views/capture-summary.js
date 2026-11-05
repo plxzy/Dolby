@@ -62,7 +62,8 @@ const DELIVERIES = { downloaded_movpkg: 'Downloaded .movpkg', online_hls: 'Onlin
 // Audio vocabulary
 
 function isAtmos(audio) {
-  return Boolean(audio?.is_atmos) || (DOLBY_FORMATS.has((audio?.format ?? '').toLowerCase()) && audio.channels >= 16);
+  // Only the decoder's own verdict confirms Atmos; format token, channel count and spatialization do not.
+  return audio?.is_atmos === true;
 }
 
 /** "Dolby Atmos", "E-AC-3 5.1", "AAC stereo", … */

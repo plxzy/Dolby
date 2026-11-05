@@ -37,6 +37,8 @@ class CaptureState:
         # Insertion-ordered: one audio summary (with a count) per distinct audio report.
         self.observed_audio: dict[tuple[Any, ...], dict[str, Any]] = {}
         self.last_file: Event | None = None
+        # Latest Atmos-decoder verdict (`mIsAtmos`), the only evidence that confirms or rules out Atmos.
+        self.decoder_is_atmos: bool | None = None
         self.renderer_events: list[Event] = []
         self._renderer_keys: set[tuple[tuple[str, str], ...]] = set()
         # The de-duplicated list cannot say which value is current (A → B → A lists A, B).
@@ -64,6 +66,9 @@ class CaptureState:
                 self._add_renderer_hint(event)
 
     def _add_audio(self, event: Event) -> None:
+        # Snapshot the decoder verdict in force when this format was reported, so a later
+        # session's decoder line can't rewrite what was observed here.
+        event = {**event, "decoder_is_atmos": self.decoder_is_atmos}
         self.last_audio = event
         if self.best_audio is None or _audio_rank(event) > _audio_rank(self.best_audio):
             self.best_audio = event
@@ -74,6 +79,9 @@ class CaptureState:
 
     def _add_renderer_hint(self, event: Event) -> None:
         self.latest_renderer_hints[event["hint"]] = event
+        if event["hint"] == "atmos_decoder_state" and event.get("decoder_is_atmos") is not None:
+            self.decoder_is_atmos = event["decoder_is_atmos"]
+            self._bind_late_decoder_state(self.decoder_is_atmos)
         if event["hint"] == "spatial_rendering_changed":
             self.spatial_rendering_changed_count += 1
         if len(self.renderer_events) >= SUMMARY_RENDERER_EVENT_LIMIT:
@@ -83,6 +91,19 @@ class CaptureState:
         if key not in self._renderer_keys:
             self._renderer_keys.add(key)
             self.renderer_events.append(event)
+
+    def _bind_late_decoder_state(self, value: bool) -> None:
+        """A decoder line that follows the audio report it describes applies to the latest report only."""
+        last = self.last_audio
+        if last is None or last.get("decoder_is_atmos") is not None:
+            return
+        updated = {**last, "decoder_is_atmos": value}
+        key = _audio_key(last)
+        if self.best_audio is last:
+            self.best_audio = updated
+        self.last_audio = updated
+        if observed := self.observed_audio.get(key):
+            observed["is_atmos"] = _audio_summary(updated)["is_atmos"]
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +278,23 @@ def _capture_quality(*, saw_codec: bool, saw_audio: bool, saw_renderer: bool) ->
 # audio
 
 
+def _is_atmos(event: Event) -> bool | None:
+    """Whether this audio report is Dolby Atmos: `True`/`False` only on decoder evidence.
+
+    The Dolby-family format token, channel count and `Spatialization yes` all occur for
+    ordinary E-AC-3 5.1, so none of them confirms Atmos. Without a decoder verdict the answer
+    is `None` (unconfirmed) for E-AC-3, and `False` for formats that can't be Atmos
+    (including the private `qc+3`, which stays unconfirmed by design).
+    """
+    audio_format = (event.get("format") or "").lower()
+    decoder = event.get("decoder_is_atmos")
+    if isinstance(decoder, bool):
+        return decoder and audio_format in DOLBY_AUDIO_FORMATS
+    if audio_format in DOLBY_AUDIO_FORMATS and audio_format != "qc+3":
+        return None
+    return False
+
+
 def _audio_summary(event: Event) -> dict[str, Any]:
     audio_format = (event.get("format") or "").lower()
     summary = {
@@ -266,7 +304,7 @@ def _audio_summary(event: Event) -> dict[str, Any]:
         "spatialization": event.get("spatialization"),
         "spatialization_eligible": event.get("spatialization_eligible"),
         "decodable": event.get("decodable"),
-        "is_atmos": audio_format in DOLBY_AUDIO_FORMATS and event.get("spatialization") == "yes",
+        "is_atmos": _is_atmos(event),
     }
     if audio_format == "qc+3":
         summary["diagnosis"] = (
