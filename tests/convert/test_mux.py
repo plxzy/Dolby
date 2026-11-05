@@ -92,11 +92,86 @@ def test_skips_audio_apple_cannot_play(source, ffmpeg, probe_streams) -> None:
     assert all(s["reason"] for s in summary["audio_skipped"])
 
 
-def test_refuses_when_no_playable_audio_remains(source, ffmpeg, probe_streams) -> None:
-    probe_streams(VIDEO, audio(1, "truehd"), audio(2, "dts"))
-    with pytest.raises(ValueError, match=r"#1 truehd, #2 dts"):
+def test_refuses_when_no_playable_or_transcodable_audio_remains(source, ffmpeg, probe_streams) -> None:
+    probe_streams(VIDEO, audio(1, "pcm_s24le"), audio(2, "vorbis"))
+    with pytest.raises(ValueError, match=r"#1 pcm_s24le, #2 vorbis"):
         run_mux(source)
     assert ffmpeg == []
+
+
+def test_transcodes_dts_to_eac3_when_nothing_else_plays(source, ffmpeg, probe_streams) -> None:
+    probe_streams(VIDEO, audio(1, "dts", channels=6, sample_rate="48000"))
+    summary = run_mux(source)
+
+    (cmd,) = ffmpeg
+    assert values(cmd, "-map") == ["0:0", "0:1"]
+    assert values(cmd, "-c:a") == ["copy"]
+    assert values(cmd, "-c:a:0") == ["eac3"]
+    assert values(cmd, "-b:a:0") == ["640k"]
+    assert values(cmd, "-ar:a:0") == ["48000"]
+    assert values(cmd, "-ac:a:0") == []  # 5.1 already fits E-AC-3
+    assert values(cmd, "-disposition:a:0") == ["default"]
+    assert summary["audio_streams"] == [{"codec": "eac3", "language": "eng"}]
+    assert summary["audio_transcoded"] == [{"index": 1, "from": "dts", "to": "eac3", "language": "eng"}]
+    assert summary["audio_skipped"] == []
+
+
+def test_transcode_downmixes_beyond_five_one(source, ffmpeg, probe_streams) -> None:
+    probe_streams(VIDEO, audio(1, "truehd", channels=8))
+    run_mux(source)
+    assert values(ffmpeg[0], "-ac:a:0") == ["6"]
+
+
+def test_transcode_uses_lower_bitrate_for_stereo(source, ffmpeg, probe_streams) -> None:
+    probe_streams(VIDEO, audio(1, "dts", channels=2))
+    run_mux(source)
+    assert values(ffmpeg[0], "-b:a:0") == ["256k"]
+
+
+def test_transcodes_only_the_primary_track(source, ffmpeg, probe_streams) -> None:
+    probe_streams(
+        VIDEO,
+        audio(1, "dts", channels=2, tags={"title": "Director's Commentary"}),
+        audio(2, "truehd", channels=8),
+        audio(3, "dts", channels=6, language="fre"),
+    )
+    summary = run_mux(source)
+
+    assert values(ffmpeg[0], "-map") == ["0:0", "0:2"]
+    assert summary["audio_transcoded"][0]["index"] == 2
+    assert [(s["index"], s["codec"]) for s in summary["audio_skipped"]] == [(1, "dts"), (3, "dts")]
+
+
+def test_does_not_transcode_when_a_playable_track_exists(source, ffmpeg, probe_streams) -> None:
+    probe_streams(VIDEO, audio(1, "dts"), audio(2, "ac3"))
+    summary = run_mux(source)
+
+    assert values(ffmpeg[0], "-map") == ["0:0", "0:2"]
+    assert values(ffmpeg[0], "-c:a:0") == []
+    assert summary["audio_transcoded"] == []
+
+
+@pytest.mark.requires_ffmpeg
+def test_dts_source_is_really_transcoded_to_eac3(tmp_path: Path) -> None:
+    """Real ffmpeg: a DTS-only MKV must come out as a playable E-AC-3 M4V."""
+    src = tmp_path / "dts.mkv"
+    subprocess.run(
+        [
+            *("ffmpeg", "-v", "error"),
+            *("-f", "lavfi", "-i", "color=c=black:s=64x64:d=1:r=24"),
+            *("-f", "lavfi", "-i", "sine=frequency=440:duration=1:sample_rate=48000"),
+            *("-c:v", "libx264", "-c:a", "dts", "-strict", "-2", "-ac", "6", str(src)),
+        ],
+        check=True,
+    )
+    dst = tmp_path / "out.m4v"
+    summary = mux.mux(src, dst)
+
+    streams = mux.ffprobe_json(dst, "-show_streams")["streams"]
+    (out_audio,) = (s for s in streams if s["codec_type"] == "audio")
+    assert out_audio["codec_name"] == "eac3"
+    assert out_audio["channels"] == 6
+    assert summary["audio_transcoded"][0]["from"] == "dts"
 
 
 def test_video_only_source_still_muxes(source, ffmpeg, probe_streams) -> None:
