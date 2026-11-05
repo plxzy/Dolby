@@ -348,3 +348,9 @@ def test_failure_cleanup_preserves_preexisting_output(tmp_path) -> None:
     with pytest.raises(ToolError), mux.discard_on_failure(output):
         raise ToolError("rejected before writing")
     assert output.read_bytes() == b"previous conversion"
+
+
+def test_drops_release_name_title(source, ffmpeg, probe_streams) -> None:
+    probe_streams(VIDEO, audio(1, "eac3"))
+    run_mux(source)
+    assert values(ffmpeg[0], "-metadata") == ["title="]

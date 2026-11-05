@@ -348,6 +348,11 @@ def mux(
     if info.has_chapters:
         cmd += ["-map_chapters", "0"]
 
+    # The MKV title is a release name ("Movie.2003.1080p.BluRay.DTS.x264-GROUP"). With
+    # `use_metadata_tags` it would be written as a second title next to the Apple TV
+    # catalogue title the tagger adds, and players show both joined by ";".
+    cmd += ["-metadata", "title="]
+
     cmd += [
         "-movflags",
         "+faststart+use_metadata_tags",
