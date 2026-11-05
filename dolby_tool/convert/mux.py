@@ -348,14 +348,15 @@ def mux(
     if info.has_chapters:
         cmd += ["-map_chapters", "0"]
 
-    # The MKV title is a release name ("Movie.2003.1080p.BluRay.DTS.x264-GROUP"). With
-    # `use_metadata_tags` it would be written as a second title next to the Apple TV
-    # catalogue title the tagger adds, and players show both joined by ";".
+    # The MKV title is a release name ("Movie.2003.1080p.BluRay.DTS.x264-GROUP"), not
+    # something to keep alongside the Apple TV catalogue title the tagger adds.
     cmd += ["-metadata", "title="]
 
     cmd += [
         "-movflags",
-        "+faststart+use_metadata_tags",
+        # Not `use_metadata_tags`: it writes a QuickTime `keys` metadata atom, and the macOS TV app
+        # silently refuses to import any file that has one (verified by bisecting a clip).
+        "+faststart",
         "-f",
         "mp4",
         str(output),

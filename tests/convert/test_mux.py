@@ -354,3 +354,9 @@ def test_drops_release_name_title(source, ffmpeg, probe_streams) -> None:
     probe_streams(VIDEO, audio(1, "eac3"))
     run_mux(source)
     assert values(ffmpeg[0], "-metadata") == ["title="]
+
+
+def test_movflags_avoid_mdta_keys_atom_the_tv_app_rejects(source, ffmpeg, probe_streams) -> None:
+    probe_streams(VIDEO, audio(1, "eac3"))
+    run_mux(source)
+    assert values(ffmpeg[0], "-movflags") == ["+faststart"]

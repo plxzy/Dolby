@@ -116,7 +116,7 @@ def convert_and_remux(
             cmd += ["-map", f"{i}:s"]
             if lang:
                 cmd += [f"-metadata:s:s:{existing_subs + i - 1}", f"language={lang}"]
-        cmd += ["-c", "copy", *tag.ffmpeg_args, "-movflags", "+faststart+use_metadata_tags", str(output)]
+        cmd += ["-c", "copy", *tag.ffmpeg_args, "-movflags", "+faststart", str(output)]
         try:
             with discard_on_failure(output):
                 run_tool(cmd)
