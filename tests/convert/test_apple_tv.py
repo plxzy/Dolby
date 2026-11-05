@@ -153,8 +153,8 @@ def test_fetch_movie_merges_search_hit_and_details(catalog) -> None:
     assert meta.rating is not None
     assert meta.rating.itunes_extc() == "mpaa|PG-13|300|"
     assert meta.short_description == "Short blurb."
-    # 16:9 art first, then the poster whose null width/height must not crash
-    assert [a.size for a in meta.artworks] == ["rectangle", "square"]
+    # poster first (TV.app shows the first covr; its null width/height must not crash), then 16:9
+    assert [a.size for a in meta.artworks] == ["square", "rectangle"]
 
 
 def test_fetch_movie_by_id_backfills_the_title(catalog) -> None:

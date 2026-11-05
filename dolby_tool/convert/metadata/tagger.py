@@ -13,16 +13,18 @@ Atoms written (AtomicParsley flag → iTunes atom):
   --TVEpisodeNum tves     --TVEpisode tven        --albumArtist aART
   --album ©alb            --tracknum trkn         (library grouping of episodes)
   --rDNSatom iTunEXTC     content rating string (e.g. "mpaa|PG-13|300|")
-Director, screenwriter and producer credits live in an iTunMOVI plist and are
-not written.
+  --rDNSatom iTunMOVI     cast / director / producer / screenwriter / studio plist
+  --hdvideo hdvd          HD badge, from the video's resolution
 """
 
+import plistlib
+import subprocess
 import tempfile
 from pathlib import Path
 
 import httpx
 
-from ...common import run_tool, which_any
+from ...common import ToolError, ffprobe_json, run_tool, to_int, which_any
 from .apple_tv import Metadata
 from .artwork import download
 
@@ -39,6 +41,53 @@ def _atomicparsley() -> str | None:
 
 def have_atomicparsley() -> bool:
     return _atomicparsley() is not None
+
+
+def _retag_via_copy(args: list[str], path: Path) -> subprocess.CompletedProcess[str]:
+    """Redo a tag that didn't fit the file's metadata padding by writing a full copy, then swapping it in.
+
+    AtomicParsley's in-place path fails ("insufficient space to retag") when the new tags are larger
+    than the padding; without `--overWrite` it rewrites the file to `<name>-temp-<pid>.<ext>` instead.
+    That needs free disk space roughly the size of the file.
+    """
+    rewrite = [a for a in args if a != "--overWrite"]
+    existing = set(path.parent.glob(f"{path.stem}-temp-*{path.suffix}"))
+    r = run_tool(rewrite, check=False)
+    fresh = sorted(set(path.parent.glob(f"{path.stem}-temp-*{path.suffix}")) - existing)
+    if r.returncode == 0 and fresh:
+        fresh[-1].replace(path)
+        fresh = fresh[:-1]
+    for leftover in fresh:  # a failed or partial rewrite must not leave a file-sized orphan behind
+        leftover.unlink(missing_ok=True)
+    return r
+
+
+def itunmovi_plist(meta: Metadata) -> str | None:
+    """The iTunMOVI XML plist TV.app reads credits from (Cast, Directors, Producers, Screenwriters, Studio)."""
+    credits: dict[str, object] = {}
+    for key, names in (
+        ("cast", meta.cast),
+        ("directors", meta.directors),
+        ("producers", meta.producers),
+        ("screenwriters", meta.screenwriters),
+    ):
+        if names:
+            credits[key] = [{"name": n} for n in names]
+    if meta.studio:
+        credits["studio"] = meta.studio
+    return plistlib.dumps(credits, fmt=plistlib.FMT_XML).decode() if credits else None
+
+
+def is_hd(path: Path) -> bool | None:
+    """Whether the first video stream is HD (>= 720 lines or >= 1280 wide); `None` if it can't be probed."""
+    try:
+        streams = ffprobe_json(path, "-select_streams", "v:0", "-show_entries", "stream=width,height")["streams"]
+    except ToolError, KeyError, OSError:
+        return None
+    if not streams:
+        return None
+    width, height = to_int(streams[0].get("width")) or 0, to_int(streams[0].get("height")) or 0
+    return height >= 720 or width >= 1280
 
 
 def apply_artwork(path: Path, image: Path) -> dict[str, object]:
@@ -123,6 +172,12 @@ def apply(path: Path, meta: Metadata) -> dict[str, object]:
         ]
         fields_set.append("iTunEXTC")
 
+    if movi := itunmovi_plist(meta):
+        args += ["--rDNSatom", movi, "name=iTunMOVI", "domain=com.apple.iTunes"]
+        fields_set.append("iTunMOVI")
+    if (hd := is_hd(path)) is not None:
+        add("--hdvideo", "true" if hd else "false")
+
     with tempfile.TemporaryDirectory() as tmp_s:
         tmp = Path(tmp_s)
         artwork_paths: list[Path] = []
@@ -136,8 +191,15 @@ def apply(path: Path, meta: Metadata) -> dict[str, object]:
             artwork_paths.append(p)
             add("--artwork", str(p))
 
+        if artwork_paths:
+            # Re-tagging must replace the old images, not stack new ones behind them
+            # (TV.app shows the first). REMOVE_ALL has to come before the --artwork args.
+            at = args.index("--artwork")
+            args[at:at] = ["--artwork", "REMOVE_ALL"]
         args += ["--overWrite"]
         r = run_tool(args, check=False)
+        if r.returncode != 0 and "insufficient space" in r.stdout:
+            r = _retag_via_copy(args, path)
         if r.returncode != 0:
             return {
                 "applied": False,

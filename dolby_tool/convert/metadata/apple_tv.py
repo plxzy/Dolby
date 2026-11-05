@@ -178,7 +178,8 @@ def _fetch_movie(hit: SearchHit, store: Store) -> Metadata:
         itunes_url=hit.raw.get("url"),
         cast=(hit.roles_summary or {}).get("cast") or [],
         directors=(hit.roles_summary or {}).get("directors") or [],
-        artworks=_artworks_from(hit.images, prefer16x9=True),
+        # Portrait poster first: TV.app shows the first `covr` image, and a movie tile is 2:3.
+        artworks=_artworks_from(hit.images, prefer16x9=False),
     )
     if hit.rating_display:
         meta.rating = lookup(store.store_code, MEDIA_MOVIE, hit.rating_display)
