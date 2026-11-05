@@ -97,7 +97,9 @@ dolby-tool tag "Season 1" --season-artwork poster.jpg --json       # replace art
   Blu-ray) is not playable on Apple devices — the base layer is kept and the summary says so.
 - **Audio** keeps every track Apple can play from MP4 (E-AC-3/Atmos, AC-3, AAC, ALAC, FLAC,
   MP3, Opus) and lists skipped ones (TrueHD, DTS, PCM) under `audio_skipped`; E-AC-3 is
-  preferred as the default track, commentary/AD tracks never are.
+  preferred as the default track, commentary/AD tracks never are. If a file has *only*
+  DTS or TrueHD, its best track is re-encoded to E-AC-3 (640k, 5.1 max, 48 kHz; reported
+  under `audio_transcoded`) instead of refusing the file. Video is never re-encoded.
 - **Subtitles**: text tracks become `mov_text`; PGS is converted to VobSub when
   [`bdsup2sub`](https://github.com/mjuhasz/BDSup2Sub) is installed; others are reported in `subs_skipped`.
 - **Metadata** (optional) comes from the Apple TV catalogue for any storefront

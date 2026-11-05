@@ -3,7 +3,9 @@
 Design: do as little as possible during mux. We `-c copy` video and the audio
 tracks Apple players can decode, so HEVC/H.264 + AC-3/EAC-3/AC-4 passthrough
 is bit-exact; audio Apple can't play from MP4 (TrueHD, DTS, PCM, …) is skipped
-and reported. HEVC is labelled `hvc1` (or `dvh1` for Dolby Vision profiles
+and reported. When a source has *no* Apple-playable audio but does have DTS or
+TrueHD, the best such track is transcoded to E-AC-3 (the only audio re-encoded;
+video is never touched) rather than refusing the file. HEVC is labelled `hvc1` (or `dvh1` for Dolby Vision profiles
 5/8), the sample entries Apple players accept. Text subtitles are converted
 to `mov_text` (the only sub codec MP4 natively supports), and PGS bitmap
 subtitles are stripped here and re-injected by `subs_pgs.py` in a second pass.
@@ -28,6 +30,18 @@ from ..common import ToolError, ffprobe_json, run_tool, to_int
 # PCM, Vorbis, …) is skipped: ffmpeg refuses or only experimentally supports
 # muxing it into MP4, and TV.app could not play it anyway.
 APPLE_AUDIO_CODECS = frozenset({"aac", "ac3", "eac3", "ac4", "alac", "flac", "mp3", "opus"})
+
+# Audio Apple can't play from MP4 but that we can re-encode to E-AC-3 when the
+# source has nothing Apple-playable. Only used as a fallback: a source that
+# already carries AC-3/E-AC-3/AAC/… keeps those bit-exact and skips these.
+TRANSCODABLE_AUDIO_CODECS = frozenset({"dts", "truehd", "mlp"})
+
+# E-AC-3 transcode parameters. ffmpeg's native encoder handles at most 5.1 and
+# only 32/44.1/48 kHz, so wider layouts are downmixed and the rate pinned.
+EAC3_MAX_CHANNELS = 6
+EAC3_SAMPLE_RATE = 48000
+EAC3_SURROUND_BITRATE = "640k"
+EAC3_STEREO_BITRATE = "256k"
 
 # Text subtitle codecs ffmpeg can convert to `mov_text`. Everything else is
 # skipped, except PGS, which `subs_pgs.py` turns into VobSub in a second pass.
@@ -64,6 +78,7 @@ class ProbeResult:
     raw: dict[str, Any]
     skipped_audio: list[SkippedStream] = field(default_factory=list)
     skipped_subs: list[SkippedStream] = field(default_factory=list)
+    transcodable_audios: list[StreamInfo] = field(default_factory=list)  # DTS/TrueHD, a fallback only
 
 
 def probe(source: Path) -> ProbeResult:
@@ -74,6 +89,7 @@ def probe(source: Path) -> ProbeResult:
     audios: list[StreamInfo] = []
     skipped_audio: list[SkippedStream] = []
     skipped_subs: list[SkippedStream] = []
+    transcodable_audios: list[StreamInfo] = []
     text_subs: list[StreamInfo] = []
     bitmap_subs: list[StreamInfo] = []
     for s in raw.get("streams", []):
@@ -91,6 +107,8 @@ def probe(source: Path) -> ProbeResult:
             audios.append(info)
         elif info.codec_type == "audio":
             skipped_audio.append(SkippedStream(info.index, info.codec, "not playable from MP4 by Apple players"))
+            if info.codec in TRANSCODABLE_AUDIO_CODECS:
+                transcodable_audios.append(info)
         elif info.codec_type == "subtitle":
             if info.codec in TEXT_SUB_CODECS:
                 text_subs.append(info)
@@ -111,6 +129,7 @@ def probe(source: Path) -> ProbeResult:
         raw=raw,
         skipped_audio=skipped_audio,
         skipped_subs=skipped_subs,
+        transcodable_audios=transcodable_audios,
     )
 
 
@@ -214,6 +233,16 @@ def _default_audio_index(audios: list[StreamInfo]) -> int:
     return best[0]
 
 
+def _eac3_args(a: StreamInfo) -> list[str]:
+    """Per-stream ffmpeg options to re-encode output audio stream 0 as E-AC-3."""
+    channels = _channels(a)
+    args = ["-c:a:0", "eac3", "-b:a:0", EAC3_SURROUND_BITRATE if channels > 2 else EAC3_STEREO_BITRATE]
+    args += ["-ar:a:0", str(EAC3_SAMPLE_RATE)]
+    if channels > EAC3_MAX_CHANNELS:
+        args += ["-ac:a:0", str(EAC3_MAX_CHANNELS)]
+    return args
+
+
 @contextmanager
 def discard_on_failure(output: Path) -> Iterator[None]:
     """Delete a newly created partial output, preserving files present before the attempt."""
@@ -255,10 +284,19 @@ def mux(
     output.parent.mkdir(parents=True, exist_ok=True)
 
     info = probe(source)
-    if info.skipped_audio and not info.audios:
-        skipped = ", ".join(f"#{s.index} {s.codec}" for s in info.skipped_audio)
-        raise ValueError(f"No audio track Apple players can play from MP4 in {source.name} (skipped: {skipped})")
-    default_audio = _default_audio_index(info.audios)
+    audios = info.audios
+    skipped_audio = info.skipped_audio
+    transcoded: StreamInfo | None = None
+    if info.skipped_audio and not audios:
+        if not info.transcodable_audios:
+            skipped = ", ".join(f"#{s.index} {s.codec}" for s in info.skipped_audio)
+            raise ValueError(f"No audio track Apple players can play from MP4 in {source.name} (skipped: {skipped})")
+        # One primary track is enough: the same ranking as the default-track pick
+        # (not commentary, English, then channel count) chooses which to re-encode.
+        transcoded = info.transcodable_audios[_default_audio_index(info.transcodable_audios)]
+        audios = [transcoded]
+        skipped_audio = [s for s in skipped_audio if s.index != transcoded.index]
+    default_audio = _default_audio_index(audios)
     tag = video_tag(info.video)
 
     cmd: list[str] = [
@@ -278,7 +316,7 @@ def mux(
     ]
 
     # Playable audio tracks, in source order.
-    for a in info.audios:
+    for a in audios:
         cmd += ["-map", f"0:{a.index}"]
 
     # Map subtitles by absolute input stream index so codec-class splitting
@@ -295,12 +333,15 @@ def mux(
             sub_codecs.append("copy")
 
     cmd += ["-c:v", "copy", *tag.ffmpeg_args, "-c:a", "copy"]
+    if transcoded is not None:
+        # The only audio stream, so it is output audio stream 0.
+        cmd += _eac3_args(transcoded)
     for i, codec in enumerate(sub_codecs):
         cmd += [f"-c:s:{i}", codec]
 
     # Default audio track flag
-    if info.audios:
-        for i, _ in enumerate(info.audios):
+    if audios:
+        for i, _ in enumerate(audios):
             flag = "default" if i == default_audio else "0"
             cmd += [f"-disposition:a:{i}", flag]
 
@@ -325,9 +366,14 @@ def mux(
         "video_codec": info.video.codec,
         "video_tag": tag.fourcc,
         "dolby_vision": tag.dolby_vision,
-        "audio_streams": [{"codec": a.codec, "language": a.language} for a in info.audios],
+        "audio_streams": [{"codec": "eac3" if a is transcoded else a.codec, "language": a.language} for a in audios],
         "default_audio_index": default_audio,
-        "audio_skipped": [asdict(s) for s in info.skipped_audio],
+        "audio_transcoded": (
+            [{"index": transcoded.index, "from": transcoded.codec, "to": "eac3", "language": transcoded.language}]
+            if transcoded is not None
+            else []
+        ),
+        "audio_skipped": [asdict(s) for s in skipped_audio],
         "text_subs_included": len(info.text_subs),
         "subs_skipped": [asdict(s) for s in info.skipped_subs],
         "bitmap_subs_dropped": 0 if include_bitmap_subs_as_passthrough else len(info.bitmap_subs),
